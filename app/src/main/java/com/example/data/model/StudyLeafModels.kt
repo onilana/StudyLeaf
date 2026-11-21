@@ -80,7 +80,7 @@ enum class ConversionToolType(
     SCAN_DOCUMENT("Scan Document", "SCAN → PDF", DocumentFormat.SCAN),
     IMAGE_TO_PDF("Image ⇄ PDF", "IMG ⇄ PDF", DocumentFormat.IMAGE),
     MERGE_PDF("Merge PDFs", "MERGE", DocumentFormat.PDF),
-    WORD_TO_PDF("Word & Text to PDF", "DOC → PDF", DocumentFormat.WORD),
+    WORD_TO_PDF("Word ⇄ PDF", "DOC ⇄ PDF", DocumentFormat.WORD),
     EXCEL_CONVERTER("Excel ⇄ Word / PDF", "XLSX ⇄ DOC", DocumentFormat.EXCEL),
     COMPRESS_IMAGE("Image Compressor", "COMPRESS", DocumentFormat.IMAGE),
     SPLIT_REORDER("Split & Reorder", "PAGES", DocumentFormat.PDF),

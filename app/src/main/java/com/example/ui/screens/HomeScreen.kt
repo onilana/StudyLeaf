@@ -279,8 +279,8 @@ private fun HomeMainColumn(
             tag = "quick_action_merge"
         ),
         HomeToolTile(
-            title = "Word → PDF",
-            desc = "Docs & notes",
+            title = "Word ⇄ PDF",
+            desc = "Upload & convert",
             icon = Icons.AutoMirrored.Rounded.Article,
             color = channels.docWord,
             onClick = { onQuickToolClick(ConversionToolType.WORD_TO_PDF) },

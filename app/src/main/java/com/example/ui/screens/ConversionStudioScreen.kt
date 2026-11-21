@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -35,8 +36,11 @@ import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.TableChart
+import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -93,6 +97,8 @@ fun ConversionStudioScreen(
     onConvertImagesToPdf: (List<Bitmap>, String, Int) -> Unit,
     onMergePdfs: (List<DocumentEntity>, String) -> Unit,
     onConvertTextToPdf: (String, String, Float, Int, String) -> Unit,
+    onConvertPdfToWord: (DocumentEntity, String) -> Unit,
+    onConvertUploadedPdfToWord: (Uri, String) -> Unit,
     onOpenReorderBoard: (Long) -> Unit,
     onOptimizePdf: (DocumentEntity, Float, String) -> Unit,
     onExportPdfToImages: (DocumentEntity) -> Unit,
@@ -161,13 +167,16 @@ fun ConversionStudioScreen(
                 )
                 ConversionToolType.MERGE_PDF -> MergePdfStudio(
                     documents = documents,
+                    preselectedDocId = preselectedDocId,
                     onMerge = onMergePdfs
                 )
-                ConversionToolType.WORD_TO_PDF -> WordToPdfStudio(
+                ConversionToolType.WORD_TO_PDF -> WordAndPdfBidirectionalStudio(
                     documents = documents,
                     preselectedDocId = preselectedDocId,
                     engine = engine,
-                    onConvert = onConvertTextToPdf
+                    onConvertTextToPdf = onConvertTextToPdf,
+                    onConvertPdfToWord = onConvertPdfToWord,
+                    onConvertUploadedPdfToWord = onConvertUploadedPdfToWord
                 )
                 ConversionToolType.EXCEL_CONVERTER -> ExcelConverterStudio(
                     documents = documents,
@@ -178,6 +187,7 @@ fun ConversionStudioScreen(
                 )
                 ConversionToolType.COMPRESS_IMAGE -> ImageCompressorStudio(
                     documents = documents,
+                    preselectedDocId = preselectedDocId,
                     engine = engine,
                     onCompressImages = onCompressImages
                 )
@@ -189,6 +199,7 @@ fun ConversionStudioScreen(
                 )
                 ConversionToolType.OPTIMIZE_PDF -> OptimizePdfStudio(
                     documents = documents.filter { it.format == DocumentFormat.PDF || it.format == DocumentFormat.SCAN },
+                    preselectedDocId = preselectedDocId,
                     onOptimize = onOptimizePdf
                 )
                 ConversionToolType.PDF_TO_IMAGE -> PickPdfStudio(
@@ -419,6 +430,7 @@ private fun ExcelConverterStudio(
 @Composable
 private fun ImageCompressorStudio(
     documents: List<DocumentEntity>,
+    preselectedDocId: Long?,
     engine: DocumentEngine,
     onCompressImages: (List<Bitmap>, Int, Int, String) -> Unit
 ) {
@@ -429,6 +441,19 @@ private fun ImageCompressorStudio(
     var maxDimensionPx by remember { mutableIntStateOf(1600) }
 
     val vaultImages = remember(documents) { documents.filter { it.format == DocumentFormat.IMAGE } }
+
+    LaunchedEffect(preselectedDocId) {
+        if (preselectedDocId != null && selectedBitmaps.isEmpty()) {
+            val match = vaultImages.firstOrNull { it.id == preselectedDocId }
+            if (match != null) {
+                val bmp = engine.renderPdfPage(match.filePath, 0, 1600)
+                if (bmp != null) {
+                    selectedBitmaps.add(match.title to bmp)
+                    outputTitle = "${match.title} (Compressed)"
+                }
+            }
+        }
+    }
 
     val multiPhotoPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 12)
@@ -900,10 +925,20 @@ private fun ImageToPdfStudio(
 @Composable
 private fun MergePdfStudio(
     documents: List<DocumentEntity>,
+    preselectedDocId: Long?,
     onMerge: (List<DocumentEntity>, String) -> Unit
 ) {
     val selectedOrder = remember { mutableStateListOf<DocumentEntity>() }
     var outputTitle by remember { mutableStateOf("Combined Study Packet") }
+
+    LaunchedEffect(preselectedDocId, documents) {
+        if (preselectedDocId != null && selectedOrder.isEmpty()) {
+            documents.firstOrNull { it.id == preselectedDocId }?.let { pre ->
+                selectedOrder.add(pre)
+                outputTitle = "${pre.title} (Merged)"
+            }
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1051,28 +1086,263 @@ private fun MergePdfStudio(
 }
 
 @Composable
+private fun WordAndPdfBidirectionalStudio(
+    documents: List<DocumentEntity>,
+    preselectedDocId: Long?,
+    engine: DocumentEngine,
+    onConvertTextToPdf: (String, String, Float, Int, String) -> Unit,
+    onConvertPdfToWord: (DocumentEntity, String) -> Unit,
+    onConvertUploadedPdfToWord: (Uri, String) -> Unit
+) {
+    val preselected = remember(documents, preselectedDocId) {
+        documents.firstOrNull { it.id == preselectedDocId }
+    }
+    var pdfToWordMode by remember(preselected?.id) {
+        mutableStateOf(
+            preselected?.format == DocumentFormat.PDF || preselected?.format == DocumentFormat.SCAN
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            FilterChip(
+                selected = !pdfToWordMode,
+                onClick = { pdfToWordMode = false },
+                shape = CircleShape,
+                label = { Text("Word → PDF") },
+                modifier = Modifier.testTag("mode_word_to_pdf")
+            )
+            FilterChip(
+                selected = pdfToWordMode,
+                onClick = { pdfToWordMode = true },
+                shape = CircleShape,
+                label = { Text("PDF → Word (.docx)") },
+                modifier = Modifier.testTag("mode_pdf_to_word")
+            )
+        }
+
+        if (pdfToWordMode) {
+            PdfToWordStudio(
+                documents = documents.filter { it.format == DocumentFormat.PDF || it.format == DocumentFormat.SCAN },
+                preselectedDocId = preselectedDocId,
+                onConvertPdfToWord = onConvertPdfToWord,
+                onConvertUploadedPdfToWord = onConvertUploadedPdfToWord
+            )
+        } else {
+            WordToPdfStudio(
+                documents = documents,
+                preselectedDocId = preselectedDocId,
+                engine = engine,
+                onConvert = onConvertTextToPdf
+            )
+        }
+    }
+}
+
+@Composable
+private fun PdfToWordStudio(
+    documents: List<DocumentEntity>,
+    preselectedDocId: Long?,
+    onConvertPdfToWord: (DocumentEntity, String) -> Unit,
+    onConvertUploadedPdfToWord: (Uri, String) -> Unit
+) {
+    var selectedPdf by remember(documents, preselectedDocId) {
+        mutableStateOf(
+            documents.firstOrNull { it.id == preselectedDocId } ?: documents.firstOrNull()
+        )
+    }
+    var outputTitle by remember(selectedPdf?.id) {
+        mutableStateOf(selectedPdf?.let { "${it.title} (Word)" } ?: "Converted Document (Word)")
+    }
+
+    val pdfUploadLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            onConvertUploadedPdfToWord(uri, "")
+        }
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            FilledTonalButton(
+                onClick = { pdfUploadLauncher.launch(arrayOf("application/pdf")) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 50.dp)
+                    .testTag("pdf_word_upload_button"),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.UploadFile,
+                    contentDescription = null,
+                    modifier = Modifier.size(19.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(stringResource(R.string.convert_upload_pdf))
+            }
+        }
+
+        item {
+            OutlinedTextField(
+                value = outputTitle,
+                onValueChange = { outputTitle = it },
+                label = { Text("Output Word (.docx) Name") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("pdf_word_title_input")
+            )
+        }
+
+        item {
+            Text(
+                text = "Or pick a PDF from Vault (${documents.size})",
+                style = MaterialTheme.typography.titleSmall
+            )
+        }
+
+        if (documents.isEmpty()) {
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(18.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.PictureAsPdf,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = "Tap \"Upload PDF File\" above to import and convert any PDF from your device into an editable Word (.docx) document.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        } else {
+            items(documents, key = { it.id }) { doc ->
+                val selected = selectedPdf?.id == doc.id
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable { selectedPdf = doc }
+                        .testTag("pdf_word_pick_${doc.id}"),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    border = BorderStroke(
+                        if (selected) 1.5.dp else 1.dp,
+                        if (selected) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outlineVariant
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = selected, onClick = { selectedPdf = doc })
+                        DocumentPreviewIcon(format = doc.format, size = 34.dp)
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = doc.title,
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${doc.format.label} • ${doc.pageCount} pg • ${formatFileSize(doc.sizeBytes)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Button(
+                onClick = {
+                    val src = selectedPdf ?: return@Button
+                    onConvertPdfToWord(src, outputTitle)
+                },
+                enabled = selectedPdf != null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 52.dp)
+                    .testTag("pdf_word_convert_button"),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Text("Convert PDF to Word (.docx)")
+            }
+        }
+    }
+}
+
+@Composable
 private fun WordToPdfStudio(
     documents: List<DocumentEntity>,
     preselectedDocId: Long?,
     engine: DocumentEngine,
     onConvert: (String, String, Float, Int, String) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     val wordDocs = remember(documents) { documents.filter { it.format == DocumentFormat.WORD } }
     var docTitle by remember { mutableStateOf("Field Ecology Notes") }
     var bodyText by remember {
         mutableStateOf(
-            "Write or paste your lecture outline, lab summary, or load an existing Word/Text file below. StudyLeaf typesets clean margins and page footers entirely offline."
+            "Upload a Word (.docx / .txt) file above, pick one from your Vault, or type directly below. StudyLeaf typesets clean margins and page footers entirely offline."
         )
     }
     var sourceLabel by remember { mutableStateOf("Direct Text Editor") }
+    var uploadedFileBadge by remember { mutableStateOf<String?>(null) }
     var fontSize by remember { mutableFloatStateOf(13f) }
     var marginPt by remember { mutableIntStateOf(44) }
 
+    val wordUploadLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val imported = engine.importUriToVault(uri)
+                if (imported != null) {
+                    val (file, _, title) = imported
+                    val extracted = engine.extractEditableText(file.absolutePath)
+                    docTitle = title
+                    bodyText = extracted.ifBlank { engine.readTextOrDocx(file) }
+                    sourceLabel = title
+                    uploadedFileBadge = title
+                }
+            }
+        }
+    }
+
     LaunchedEffect(preselectedDocId, wordDocs) {
         val target = wordDocs.firstOrNull { it.id == preselectedDocId } ?: wordDocs.firstOrNull()
-        if (target != null) {
+        if (target != null && uploadedFileBadge == null) {
             docTitle = target.title
-            bodyText = engine.readTextOrDocx(File(target.filePath))
+            bodyText = engine.extractEditableText(target.filePath).ifBlank {
+                engine.readTextOrDocx(File(target.filePath))
+            }
             sourceLabel = target.title
         }
     }
@@ -1082,10 +1352,67 @@ private fun WordToPdfStudio(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilledTonalButton(
+                    onClick = {
+                        wordUploadLauncher.launch(
+                            arrayOf(
+                                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                "application/msword",
+                                "text/plain",
+                                "text/*"
+                            )
+                        )
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 50.dp)
+                        .testTag("word_pdf_upload_button"),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.UploadFile,
+                        contentDescription = null,
+                        modifier = Modifier.size(19.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.convert_upload_word))
+                }
+                uploadedFileBadge?.let { loadedName ->
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Description,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = "Uploaded: $loadedName",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         if (wordDocs.isNotEmpty()) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Load from Vault", style = MaterialTheme.typography.titleSmall)
+                    Text("Or load from Vault", style = MaterialTheme.typography.titleSmall)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1094,8 +1421,9 @@ private fun WordToPdfStudio(
                     ) {
                         wordDocs.forEach { doc ->
                             FilterChip(
-                                selected = sourceLabel == doc.title,
+                                selected = sourceLabel == doc.title && uploadedFileBadge == null,
                                 onClick = {
+                                    uploadedFileBadge = null
                                     docTitle = doc.title
                                     bodyText = engine.readTextOrDocx(File(doc.filePath))
                                     sourceLabel = doc.title
@@ -1113,7 +1441,7 @@ private fun WordToPdfStudio(
             OutlinedTextField(
                 value = docTitle,
                 onValueChange = { docTitle = it },
-                label = { Text("Document Title") },
+                label = { Text("Output PDF Title") },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
@@ -1126,7 +1454,7 @@ private fun WordToPdfStudio(
             OutlinedTextField(
                 value = bodyText,
                 onValueChange = { bodyText = it },
-                label = { Text("Document Content") },
+                label = { Text("Word Document Content") },
                 minLines = 8,
                 maxLines = 14,
                 shape = RoundedCornerShape(12.dp),
@@ -1171,9 +1499,14 @@ private fun WordToPdfStudio(
 @Composable
 private fun OptimizePdfStudio(
     documents: List<DocumentEntity>,
+    preselectedDocId: Long?,
     onOptimize: (DocumentEntity, Float, String) -> Unit
 ) {
-    var selectedDoc by remember(documents) { mutableStateOf(documents.firstOrNull()) }
+    var selectedDoc by remember(documents, preselectedDocId) {
+        mutableStateOf(
+            documents.firstOrNull { it.id == preselectedDocId } ?: documents.firstOrNull()
+        )
+    }
     var presetIndex by remember { mutableIntStateOf(0) }
     val presets = listOf(
         Triple("Eco Screen", 0.72f, "Smallest footprint for phone reading"),

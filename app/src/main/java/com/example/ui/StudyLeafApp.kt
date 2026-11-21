@@ -73,6 +73,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.studyleaf.R
 import com.example.data.local.DocumentEntity
 import com.example.data.model.ConversionToolType
+import com.example.data.model.DocumentFormat
 import com.example.ui.components.StudyLeafWindowSize
 import com.example.ui.components.calculateWindowSize
 import com.example.ui.screens.ConversionStudioScreen
@@ -229,7 +230,26 @@ fun StudyLeafApp(
                             },
                             onOpenReorderBoard = { viewModel.openPageReorderBoard(doc.id) },
                             onOpenAiForPage = { pageIdx -> viewModel.openAiAssistant(doc.id, pageIdx) },
-                            onConvertToExcel = { viewModel.openTool(ConversionToolType.EXCEL_CONVERTER, doc.id) },
+                            onConvertToPdf = {
+                                when (doc.format) {
+                                    DocumentFormat.WORD -> viewModel.runWordDocToPdf(doc)
+                                    DocumentFormat.EXCEL -> viewModel.runExcelToPdf(doc, "${doc.title} PDF")
+                                    DocumentFormat.IMAGE -> viewModel.runImageDocToPdf(doc)
+                                    else -> Unit
+                                }
+                            },
+                            onConvertToWord = {
+                                if (doc.format == DocumentFormat.EXCEL) {
+                                    viewModel.runExcelToWord(doc, "${doc.title} Report")
+                                } else {
+                                    viewModel.runPdfToWord(doc, "${doc.title} (Word)")
+                                }
+                            },
+                            onConvertToExcel = { viewModel.runDocOrPdfToExcel(doc, "${doc.title} Sheet") },
+                            onConvertToImages = { viewModel.runPdfToImages(doc) },
+                            onOptimizePdf = { viewModel.openTool(ConversionToolType.OPTIMIZE_PDF, doc.id) },
+                            onMergeWithOthers = { viewModel.openTool(ConversionToolType.MERGE_PDF, doc.id) },
+                            onCompressImage = { viewModel.openTool(ConversionToolType.COMPRESS_IMAGE, doc.id) },
                             onEditDocument = { viewModel.openDocumentEditor(doc.id) },
                             onShare = { shareDoc(doc) }
                         )
@@ -283,6 +303,8 @@ fun StudyLeafApp(
                         onConvertImagesToPdf = viewModel::runImageToPdf,
                         onMergePdfs = viewModel::runMergePdfs,
                         onConvertTextToPdf = viewModel::runTextToPdf,
+                        onConvertPdfToWord = viewModel::runPdfToWord,
+                        onConvertUploadedPdfToWord = viewModel::runUploadedPdfToWord,
                         onOpenReorderBoard = viewModel::openPageReorderBoard,
                         onOptimizePdf = viewModel::runOptimizePdf,
                         onExportPdfToImages = viewModel::runPdfToImages,

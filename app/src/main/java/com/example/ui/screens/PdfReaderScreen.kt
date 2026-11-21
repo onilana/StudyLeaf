@@ -47,22 +47,31 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.CallMerge
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.FormatStrikethrough
 import androidx.compose.material.icons.filled.FormatUnderlined
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.PanTool
+import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.StickyNote2
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.ViewSidebar
@@ -136,7 +145,13 @@ fun PdfReaderScreen(
     onClearPageAnnotations: (Int) -> Unit,
     onOpenReorderBoard: () -> Unit,
     onOpenAiForPage: (Int) -> Unit,
+    onConvertToPdf: () -> Unit,
+    onConvertToWord: () -> Unit,
     onConvertToExcel: () -> Unit,
+    onConvertToImages: () -> Unit,
+    onOptimizePdf: () -> Unit,
+    onMergeWithOthers: () -> Unit,
+    onCompressImage: () -> Unit,
     onEditDocument: () -> Unit,
     onShare: () -> Unit
 ) {
@@ -151,6 +166,7 @@ fun PdfReaderScreen(
     var chromeVisible by remember { mutableStateOf(true) }
     var toolsMenuExpanded by remember { mutableStateOf(false) }
     var showThumbnailRail by remember(document.id) { mutableStateOf(false) }
+    var showConvertDialog by remember { mutableStateOf(false) }
 
     var activeTool by remember { mutableStateOf(AnnotationTool.PAN) }
     var activeColor by remember { mutableStateOf(AnnotationColorOption.YELLOW) }
@@ -275,6 +291,50 @@ fun PdfReaderScreen(
                 }) {
                     Text("Remove Note", color = MaterialTheme.colorScheme.error)
                 }
+            }
+        )
+    }
+
+    // Universal Convert to Any Format Dialog
+    if (showConvertDialog) {
+        ConvertOpenFileDialog(
+            document = document,
+            onDismiss = { showConvertDialog = false },
+            onConvertToPdf = {
+                showConvertDialog = false
+                onConvertToPdf()
+            },
+            onConvertToWord = {
+                showConvertDialog = false
+                onConvertToWord()
+            },
+            onConvertToExcel = {
+                showConvertDialog = false
+                onConvertToExcel()
+            },
+            onConvertToImages = {
+                showConvertDialog = false
+                onConvertToImages()
+            },
+            onEditDocument = {
+                showConvertDialog = false
+                onEditDocument()
+            },
+            onOptimizePdf = {
+                showConvertDialog = false
+                onOptimizePdf()
+            },
+            onOpenReorderBoard = {
+                showConvertDialog = false
+                onOpenReorderBoard()
+            },
+            onMergeWithOthers = {
+                showConvertDialog = false
+                onMergeWithOthers()
+            },
+            onCompressImage = {
+                showConvertDialog = false
+                onCompressImage()
             }
         )
     }
@@ -525,6 +585,24 @@ fun PdfReaderScreen(
                             document.format == DocumentFormat.SCAN ||
                             document.format == DocumentFormat.WORD
 
+                        // Universal Convert to Any Format button (always accessible on any open file)
+                        IconButton(
+                            onClick = {
+                                toolsMenuExpanded = false
+                                showConvertDialog = true
+                            },
+                            modifier = Modifier
+                                .size(38.dp)
+                                .testTag("reader_convert_top_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.SwapHoriz,
+                                contentDescription = stringResource(R.string.cd_convert_any),
+                                tint = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+
                         if (isEditableTextDoc) {
                             IconButton(
                                 onClick = {
@@ -653,8 +731,21 @@ fun PdfReaderScreen(
                                 )
                             }
 
-                            // Convert PDF/Word to Excel
-                            if (document.format != DocumentFormat.IMAGE) {
+                            // Universal Convert to Any Format
+                            CompactReaderToolButton(
+                                icon = Icons.Filled.SwapHoriz,
+                                label = "Convert",
+                                selected = showConvertDialog,
+                                tintOverride = MaterialTheme.colorScheme.secondary,
+                                onClick = {
+                                    toolsMenuExpanded = false
+                                    showConvertDialog = true
+                                },
+                                tag = "reader_convert_menu_button"
+                            )
+
+                            // Convert PDF/Word to Excel shortcut
+                            if (document.format != DocumentFormat.IMAGE && document.format != DocumentFormat.EXCEL) {
                                 CompactReaderToolButton(
                                     icon = Icons.Filled.TableChart,
                                     label = "Excel",
@@ -1151,6 +1242,206 @@ private fun ThumbnailSideRail(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ConvertOpenFileDialog(
+    document: DocumentEntity,
+    onDismiss: () -> Unit,
+    onConvertToPdf: () -> Unit,
+    onConvertToWord: () -> Unit,
+    onConvertToExcel: () -> Unit,
+    onConvertToImages: () -> Unit,
+    onEditDocument: () -> Unit,
+    onOptimizePdf: () -> Unit,
+    onOpenReorderBoard: () -> Unit,
+    onMergeWithOthers: () -> Unit,
+    onCompressImage: () -> Unit
+) {
+    val isPdfLike = document.format == DocumentFormat.PDF || document.format == DocumentFormat.SCAN
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = stringResource(R.string.convert_dialog_title),
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Text(
+                    text = "${document.title} (${document.format.label})",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (document.format == DocumentFormat.WORD ||
+                    document.format == DocumentFormat.EXCEL ||
+                    document.format == DocumentFormat.IMAGE
+                ) {
+                    ConvertActionRow(
+                        icon = Icons.Filled.PictureAsPdf,
+                        title = "Convert to PDF",
+                        subtitle = "Generate a clean, printable PDF document",
+                        onClick = onConvertToPdf,
+                        tag = "convert_action_to_pdf"
+                    )
+                }
+
+                if (isPdfLike || document.format == DocumentFormat.EXCEL) {
+                    ConvertActionRow(
+                        icon = Icons.Filled.Description,
+                        title = "Convert to Word (.docx)",
+                        subtitle = "Extract text into an editable Word document",
+                        onClick = onConvertToWord,
+                        tag = "convert_action_to_word"
+                    )
+                }
+
+                if (isPdfLike || document.format == DocumentFormat.WORD) {
+                    ConvertActionRow(
+                        icon = Icons.Filled.TableChart,
+                        title = "Convert to Excel (.xlsx)",
+                        subtitle = "Structure lines and tables into a spreadsheet",
+                        onClick = onConvertToExcel,
+                        tag = "convert_action_to_excel"
+                    )
+                }
+
+                if (isPdfLike) {
+                    ConvertActionRow(
+                        icon = Icons.Filled.Image,
+                        title = "Export Pages to PNG Images",
+                        subtitle = "Save each page as a crisp image in Vault",
+                        onClick = onConvertToImages,
+                        tag = "convert_action_to_images"
+                    )
+                }
+
+                if (isPdfLike || document.format == DocumentFormat.WORD) {
+                    ConvertActionRow(
+                        icon = Icons.Filled.EditNote,
+                        title = "Edit Text & Words",
+                        subtitle = "Modify text and save as PDF or Word (.docx)",
+                        onClick = onEditDocument,
+                        tag = "convert_action_edit_text"
+                    )
+                }
+
+                if (isPdfLike) {
+                    ConvertActionRow(
+                        icon = Icons.Filled.Compress,
+                        title = "Optimize / Shrink PDF",
+                        subtitle = "Reduce file size with quality presets",
+                        onClick = onOptimizePdf,
+                        tag = "convert_action_optimize_pdf"
+                    )
+                    ConvertActionRow(
+                        icon = Icons.Filled.ViewAgenda,
+                        title = "Split & Reorder Pages",
+                        subtitle = "Rearrange or extract selected pages",
+                        onClick = onOpenReorderBoard,
+                        tag = "convert_action_reorder_pages"
+                    )
+                }
+
+                if (document.format == DocumentFormat.IMAGE) {
+                    ConvertActionRow(
+                        icon = Icons.Filled.PhotoSizeSelectLarge,
+                        title = "Compress Image",
+                        subtitle = "Shrink resolution and JPEG quality offline",
+                        onClick = onCompressImage,
+                        tag = "convert_action_compress_image"
+                    )
+                }
+
+                ConvertActionRow(
+                    icon = Icons.AutoMirrored.Filled.CallMerge,
+                    title = "Merge with Other Files",
+                    subtitle = "Combine into one multi-page PDF packet",
+                    onClick = onMergeWithOthers,
+                    tag = "convert_action_merge"
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("convert_dialog_close_button")
+            ) {
+                Text(stringResource(R.string.action_close))
+            }
+        }
+    )
+}
+
+@Composable
+private fun ConvertActionRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    tag: String
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(tag)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }

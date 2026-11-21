@@ -120,4 +120,8 @@
     <string name="editor_placeholder">Start typing or tap AI Extract Text to pull words from PDF pages…</string>
     <string name="cd_edit_document">Edit document text</string>
     <string name="cd_redo">Redo last change</string>
+    <string name="cd_convert_any">Convert to any format</string>
+    <string name="convert_dialog_title">Convert File</string>
+    <string name="convert_upload_word">Upload Word File (.docx / .txt)</string>
+    <string name="convert_upload_pdf">Upload PDF File</string>
 </resources>

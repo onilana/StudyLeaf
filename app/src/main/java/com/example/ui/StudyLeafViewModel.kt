@@ -845,6 +845,135 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun runPdfToWord(source: DocumentEntity, outputTitle: String = "") {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true, processingLabel = "Converting PDF to editable Word (.docx)…") }
+            val localText = engine.extractEditableText(source.filePath)
+            val resolvedText = if (localText.length >= 24) {
+                localText
+            } else {
+                try {
+                    val pageCount = engine.getPdfPageCount(source.filePath).coerceIn(1, 6)
+                    val bitmaps = buildList {
+                        for (i in 0 until pageCount) {
+                            engine.renderPdfPage(source.filePath, i, targetWidthPx = 1200)?.let { add(it) }
+                        }
+                    }
+                    val aiText = if (bitmaps.isNotEmpty()) {
+                        withTimeout(60_000L) {
+                            aiEngine.extractEditableTextFromPages(bitmaps, source.title)
+                        }
+                    } else ""
+                    if (aiText.isNotBlank()) {
+                        engine.saveEditableTextCache(File(source.filePath), aiText)
+                        aiText
+                    } else {
+                        localText.ifBlank { source.summarySnippet }
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.e("StudyLeafConvert", "AI OCR fallback failed during PDF to Word", e)
+                    localText.ifBlank { source.summarySnippet }
+                }
+            }
+            val finalTitle = outputTitle.trim().ifBlank { "${source.title} (Word)" }
+            val doc = repository.saveEditedDocument(
+                source = source,
+                newTitle = finalTitle,
+                editedText = resolvedText.ifBlank { source.title },
+                targetFormat = DocumentFormat.WORD,
+                overwriteOriginal = false
+            )
+            _uiState.update {
+                it.copy(
+                    isProcessing = false,
+                    processingLabel = "",
+                    selectedPreviewDocId = doc.id,
+                    overlay = StudyLeafOverlay.Reader(doc.id, doc),
+                    snackbarMessage = "Converted \"${doc.title}.docx\" on-device"
+                )
+            }
+        }
+    }
+
+    fun runUploadedPdfToWord(uri: Uri, customOutputTitle: String = "") {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true, processingLabel = "Importing PDF & converting to Word…") }
+            val imported = repository.importDeviceDocument(uri)
+            if (imported != null) {
+                runPdfToWord(
+                    source = imported,
+                    outputTitle = customOutputTitle.ifBlank { "${imported.title} (Word)" }
+                )
+            } else {
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        snackbarMessage = "Could not import the selected PDF file"
+                    )
+                }
+            }
+        }
+    }
+
+    fun runWordDocToPdf(source: DocumentEntity) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true, processingLabel = "Converting Word document to PDF…") }
+            val bodyText = engine.extractEditableText(source.filePath)
+                .ifBlank { source.summarySnippet.ifBlank { source.title } }
+            val doc = repository.convertTextToPdf(
+                title = "${source.title} (PDF)",
+                bodyText = bodyText,
+                fontSizePt = 13f,
+                marginPt = 42,
+                sourceName = source.title
+            )
+            _uiState.update {
+                it.copy(
+                    isProcessing = false,
+                    processingLabel = "",
+                    selectedPreviewDocId = doc.id,
+                    overlay = StudyLeafOverlay.Reader(doc.id, doc),
+                    snackbarMessage = "Converted \"${doc.title}\" (${doc.pageCount} pg)"
+                )
+            }
+        }
+    }
+
+    fun runImageDocToPdf(source: DocumentEntity) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true, processingLabel = "Converting image to PDF…") }
+            val bmp = engine.renderPdfPage(source.filePath, 0, targetWidthPx = 1600)
+            if (bmp != null) {
+                val doc = repository.convertImagesToPdf(
+                    bitmaps = listOf(bmp),
+                    outputTitle = "${source.title} (PDF)",
+                    marginPt = 24,
+                    isScan = false
+                )
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        selectedPreviewDocId = doc.id,
+                        overlay = StudyLeafOverlay.Reader(doc.id, doc),
+                        snackbarMessage = "Converted \"${doc.title}.pdf\""
+                    )
+                }
+            } else {
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        snackbarMessage = "Could not decode image for PDF conversion"
+                    )
+                }
+            }
+        }
+    }
+
     fun runDocOrPdfToExcel(source: DocumentEntity, outputTitle: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isProcessing = true, processingLabel = "Converting to Excel (.xlsx)…") }
