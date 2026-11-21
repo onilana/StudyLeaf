@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "598793515894",
+    "project_id": "astral-pursuit-412412",
+    "storage_bucket": "astral-pursuit-412412.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:598793515894:android:cf91b9d142732c19fc0057",
+        "android_client_info": {
+          "package_name": "com.aistudio.studyleaf.krmxvp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBGNWRWlEGztc19e4ZSe5-DoYERlzksOew"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:598793515894:android:1d9c5a6c61f81dadfc0057",
+        "android_client_info": {
+          "package_name": "com.studyleaf.org"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBGNWRWlEGztc19e4ZSe5-DoYERlzksOew"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
