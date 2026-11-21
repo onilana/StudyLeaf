@@ -13,7 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.ai.configureAppCheck
 import com.example.data.model.ThemePreference
 import com.example.ui.StudyLeafApp
 import com.example.ui.StudyLeafViewModel
@@ -25,9 +24,6 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Configure Firebase App Check with launch intent before UI, ViewModels, or Firebase calls
-        configureAppCheck(this, intent)
 
         if (savedInstanceState == null) {
             pendingExternalUri.value = extractIncomingDocumentUri(intent)

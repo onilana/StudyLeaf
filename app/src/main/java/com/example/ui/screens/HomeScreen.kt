@@ -3,6 +3,7 @@ package com.example.ui.screens
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +30,7 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.Person
@@ -45,6 +47,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -57,12 +60,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.studyleaf.BuildConfig
 import com.studyleaf.R
@@ -87,6 +92,7 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     windowSize: StudyLeafWindowSize,
     isDarkTheme: Boolean,
+    hasApiKey: Boolean,
     documents: List<DocumentEntity>,
     totalConversions: Int,
     searchQuery: String,
@@ -95,6 +101,7 @@ fun HomeScreen(
     selectedDocAnnotationCount: Int,
     engine: DocumentEngine,
     onToggleTheme: () -> Unit,
+    onOpenApiKeySettings: () -> Unit,
     onSearchChange: (String) -> Unit,
     onFilterChange: (LibraryFilter) -> Unit,
     onQuickToolClick: (ConversionToolType) -> Unit,
@@ -148,6 +155,7 @@ fun HomeScreen(
             HomeMainColumn(
                 greeting = greeting,
                 isDarkTheme = isDarkTheme,
+                hasApiKey = hasApiKey,
                 documents = filteredDocs,
                 totalCount = documents.size,
                 totalConversions = totalConversions,
@@ -155,6 +163,7 @@ fun HomeScreen(
                 activeFilter = activeFilter,
                 selectedDocId = selectedPreviewDoc?.id,
                 onToggleTheme = onToggleTheme,
+                onOpenApiKeySettings = onOpenApiKeySettings,
                 onSearchChange = onSearchChange,
                 onFilterChange = onFilterChange,
                 onQuickToolClick = onQuickToolClick,
@@ -194,6 +203,7 @@ fun HomeScreen(
         HomeMainColumn(
             greeting = greeting,
             isDarkTheme = isDarkTheme,
+            hasApiKey = hasApiKey,
             documents = filteredDocs,
             totalCount = documents.size,
             totalConversions = totalConversions,
@@ -201,6 +211,7 @@ fun HomeScreen(
             activeFilter = activeFilter,
             selectedDocId = null,
             onToggleTheme = onToggleTheme,
+            onOpenApiKeySettings = onOpenApiKeySettings,
             onSearchChange = onSearchChange,
             onFilterChange = onFilterChange,
             onQuickToolClick = onQuickToolClick,
@@ -226,6 +237,7 @@ fun HomeScreen(
 private fun HomeMainColumn(
     greeting: String,
     isDarkTheme: Boolean,
+    hasApiKey: Boolean,
     documents: List<DocumentEntity>,
     totalCount: Int,
     totalConversions: Int,
@@ -233,6 +245,7 @@ private fun HomeMainColumn(
     activeFilter: LibraryFilter,
     selectedDocId: Long?,
     onToggleTheme: () -> Unit,
+    onOpenApiKeySettings: () -> Unit,
     onSearchChange: (String) -> Unit,
     onFilterChange: (LibraryFilter) -> Unit,
     onQuickToolClick: (ConversionToolType) -> Unit,
@@ -346,39 +359,50 @@ private fun HomeMainColumn(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { showAboutDialog = true }
+                        .padding(vertical = 2.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    StudyLeafBrandMark(size = 34.dp)
-                    Column {
+                    StudyLeafBrandMark(size = 32.dp)
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "StudyLeaf",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = "$greeting • $totalCount files • $totalConversions ops",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    horizontalArrangement = Arrangement.spacedBy(0.dp)
                 ) {
                     Surface(
                         onClick = { onAskAi(selectedDocId) },
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.secondaryContainer,
-                        modifier = Modifier.testTag("home_ai_companion_chip")
+                        modifier = Modifier
+                            .padding(end = 2.dp)
+                            .testTag("home_ai_companion_chip")
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
@@ -386,20 +410,20 @@ private fun HomeMainColumn(
                                 imageVector = Icons.Filled.AutoAwesome,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.size(13.dp)
+                                modifier = Modifier.size(14.dp)
                             )
                             Text(
-                                text = "Gemini AI",
+                                text = "AI",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                fontWeight = FontWeight.SemiBold
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1
                             )
                         }
                     }
                     IconButton(
                         onClick = onToggleTheme,
                         modifier = Modifier
-                            .size(38.dp)
                             .minimumInteractiveComponentSize()
                             .testTag("toggle_theme_button")
                     ) {
@@ -407,21 +431,20 @@ private fun HomeMainColumn(
                             imageVector = if (isDarkTheme) Icons.Filled.LightMode else Icons.Filled.DarkMode,
                             contentDescription = stringResource(R.string.cd_toggle_theme),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(19.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                     IconButton(
                         onClick = { showAboutDialog = true },
                         modifier = Modifier
-                            .size(36.dp)
                             .minimumInteractiveComponentSize()
                             .testTag("home_about_button")
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Info,
                             contentDescription = stringResource(R.string.cd_about_app),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
                 }
@@ -582,6 +605,11 @@ private fun HomeMainColumn(
 
     if (showAboutDialog) {
         StudyLeafAboutDialog(
+            hasApiKey = hasApiKey,
+            onManageApiKey = {
+                showAboutDialog = false
+                onOpenApiKeySettings()
+            },
             onDismiss = { showAboutDialog = false }
         )
     }
@@ -589,6 +617,8 @@ private fun HomeMainColumn(
 
 @Composable
 private fun StudyLeafAboutDialog(
+    hasApiKey: Boolean,
+    onManageApiKey: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -679,6 +709,29 @@ private fun StudyLeafAboutDialog(
                             )
                         }
                     }
+                }
+
+                OutlinedButton(
+                    onClick = onManageApiKey,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("about_manage_api_key_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Key,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (hasApiKey) {
+                            "Gemini API Key (Configured)"
+                        } else {
+                            "Add Your Gemini API Key"
+                        },
+                        style = MaterialTheme.typography.labelLarge
+                    )
                 }
 
                 FilledTonalButton(

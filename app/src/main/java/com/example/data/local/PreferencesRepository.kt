@@ -17,6 +17,8 @@ class PreferencesRepository(private val context: Context) {
         val THEME = stringPreferencesKey("theme_preference")
         val FILE_VIEW_MODE = stringPreferencesKey("file_view_mode")
         val SORT_ORDER = stringPreferencesKey("sort_order")
+        val GEMINI_API_KEY = stringPreferencesKey("user_gemini_api_key")
+        val GEMINI_MODEL = stringPreferencesKey("user_gemini_model")
     }
 
     val themePreference: Flow<ThemePreference> = context.studyLeafDataStore.data.map { prefs ->
@@ -34,6 +36,14 @@ class PreferencesRepository(private val context: Context) {
             .getOrDefault(SortOrder.RECENT)
     }
 
+    val userGeminiApiKey: Flow<String> = context.studyLeafDataStore.data.map { prefs ->
+        prefs[Keys.GEMINI_API_KEY].orEmpty()
+    }
+
+    val userGeminiModel: Flow<String> = context.studyLeafDataStore.data.map { prefs ->
+        prefs[Keys.GEMINI_MODEL]?.takeIf { it.isNotBlank() } ?: DEFAULT_GEMINI_MODEL
+    }
+
     suspend fun setThemePreference(preference: ThemePreference) {
         context.studyLeafDataStore.edit { it[Keys.THEME] = preference.name }
     }
@@ -44,5 +54,25 @@ class PreferencesRepository(private val context: Context) {
 
     suspend fun setSortOrder(order: SortOrder) {
         context.studyLeafDataStore.edit { it[Keys.SORT_ORDER] = order.name }
+    }
+
+    suspend fun setUserGeminiApiKey(apiKey: String) {
+        val cleaned = apiKey.trim()
+        context.studyLeafDataStore.edit { prefs ->
+            if (cleaned.isEmpty()) {
+                prefs.remove(Keys.GEMINI_API_KEY)
+            } else {
+                prefs[Keys.GEMINI_API_KEY] = cleaned
+            }
+        }
+    }
+
+    suspend fun setUserGeminiModel(model: String) {
+        val cleaned = model.trim().ifBlank { DEFAULT_GEMINI_MODEL }
+        context.studyLeafDataStore.edit { it[Keys.GEMINI_MODEL] = cleaned }
+    }
+
+    companion object {
+        const val DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
     }
 }

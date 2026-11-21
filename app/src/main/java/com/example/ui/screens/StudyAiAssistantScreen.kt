@@ -34,6 +34,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.StickyNote2
@@ -87,7 +88,10 @@ fun StudyAiAssistantScreen(
     activeDoc: DocumentEntity?,
     pageIndex: Int,
     aiState: AiAssistantUiState,
+    hasApiKey: Boolean,
+    selectedModel: String,
     windowSize: StudyLeafWindowSize,
+    onOpenApiKeySettings: () -> Unit,
     onSelectDocument: (Long) -> Unit,
     onSelectMode: (AiAssistantMode) -> Unit,
     onRunSummary: () -> Unit,
@@ -168,7 +172,23 @@ fun StudyAiAssistantScreen(
                     }
                     if (activeDoc != null) {
                         FormatBadge(format = activeDoc.format)
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    IconButton(
+                        onClick = onOpenApiKeySettings,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("ai_manage_key_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Key,
+                            contentDescription = stringResource(R.string.cd_manage_api_key),
+                            tint = if (hasApiKey) {
+                                MaterialTheme.colorScheme.secondary
+                            } else {
+                                MaterialTheme.colorScheme.error
+                            }
+                        )
                     }
                 }
 
@@ -253,6 +273,84 @@ fun StudyAiAssistantScreen(
                             }
                         }
                     }
+                }
+            }
+        }
+
+        // User API Key Banner (shown whenever user has not added their own key yet)
+        if (!hasApiKey) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = windowSize.horizontalMargin, vertical = 10.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Key,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "Connect Your Own Gemini API Key",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                    Text(
+                        text = "AI runs directly on your own free Google Gemini quota. Add your personal key to start summarizing, creating flashcards, or chatting.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.9f)
+                    )
+                    Button(
+                        onClick = onOpenApiKeySettings,
+                        shape = CircleShape,
+                        modifier = Modifier.testTag("ai_setup_key_banner_button")
+                    ) {
+                        Icon(Icons.Filled.Key, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Add Your Gemini API Key")
+                    }
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = windowSize.horizontalMargin, vertical = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Using your own Gemini key • $selectedModel",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Surface(
+                    onClick = onOpenApiKeySettings,
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.testTag("ai_change_key_chip")
+                ) {
+                    Text(
+                        text = "Change Key",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
                 }
             }
         }

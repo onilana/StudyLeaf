@@ -124,4 +124,13 @@
     <string name="convert_dialog_title">Convert File</string>
     <string name="convert_upload_word">Upload Word File (.docx / .txt)</string>
     <string name="convert_upload_pdf">Upload PDF File</string>
+
+    <!-- User Gemini API Key (BYOK) -->
+    <string name="cd_manage_api_key">Manage your Gemini API key</string>
+    <string name="api_key_dialog_title">Your Gemini API Key</string>
+    <string name="api_key_dialog_subtitle">AI features run directly on your own Google Gemini quota. Your key stays private on this device only.</string>
+    <string name="api_key_get_free">Get Free API Key</string>
+    <string name="api_key_save">Save Key</string>
+    <string name="api_key_clear">Remove Key</string>
+    <string name="api_key_test">Test Key</string>
 </resources>

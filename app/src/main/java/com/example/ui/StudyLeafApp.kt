@@ -74,6 +74,7 @@ import com.studyleaf.R
 import com.example.data.local.DocumentEntity
 import com.example.data.model.ConversionToolType
 import com.example.data.model.DocumentFormat
+import com.example.ui.components.GeminiApiKeyDialog
 import com.example.ui.components.StudyLeafWindowSize
 import com.example.ui.components.calculateWindowSize
 import com.example.ui.screens.ConversionStudioScreen
@@ -99,6 +100,9 @@ fun StudyLeafApp(
     val history by viewModel.history.collectAsStateWithLifecycle()
     val fileViewMode by viewModel.fileViewMode.collectAsStateWithLifecycle()
     val sortOrder by viewModel.sortOrder.collectAsStateWithLifecycle()
+    val userGeminiApiKey by viewModel.userGeminiApiKey.collectAsStateWithLifecycle()
+    val userGeminiModel by viewModel.userGeminiModel.collectAsStateWithLifecycle()
+    val hasApiKey = userGeminiApiKey.isNotBlank()
 
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
@@ -195,6 +199,18 @@ fun StudyLeafApp(
                     Text(stringResource(R.string.action_cancel))
                 }
             }
+        )
+    }
+
+    // Bring-Your-Own Gemini API Key Dialog
+    if (uiState.showApiKeyDialog) {
+        GeminiApiKeyDialog(
+            currentApiKey = userGeminiApiKey,
+            currentModel = userGeminiModel,
+            onDismiss = viewModel::closeApiKeyDialog,
+            onSave = viewModel::saveUserGeminiConfig,
+            onClear = viewModel::clearUserGeminiApiKey,
+            onTestKey = viewModel::testUserGeminiApiKey
         )
     }
 
@@ -339,7 +355,10 @@ fun StudyLeafApp(
                         activeDoc = activeDoc,
                         pageIndex = overlay.pageIndex,
                         aiState = aiState,
+                        hasApiKey = hasApiKey,
+                        selectedModel = userGeminiModel,
                         windowSize = windowSize,
+                        onOpenApiKeySettings = viewModel::openApiKeyDialog,
                         onSelectDocument = viewModel::selectAiDocument,
                         onSelectMode = viewModel::selectAiMode,
                         onRunSummary = viewModel::runAiPageSummary,
@@ -378,6 +397,7 @@ fun StudyLeafApp(
                             StudyLeafTab.HOME -> HomeScreen(
                                 windowSize = windowSize,
                                 isDarkTheme = isDarkTheme,
+                                hasApiKey = hasApiKey,
                                 documents = documents,
                                 totalConversions = history.size,
                                 searchQuery = uiState.searchQuery,
@@ -386,6 +406,7 @@ fun StudyLeafApp(
                                 selectedDocAnnotationCount = previewAnnotationCount,
                                 engine = viewModel.engine,
                                 onToggleTheme = { viewModel.toggleTheme(isDarkTheme) },
+                                onOpenApiKeySettings = viewModel::openApiKeyDialog,
                                 onSearchChange = viewModel::updateSearch,
                                 onFilterChange = viewModel::selectFilter,
                                 onQuickToolClick = { viewModel.openTool(it) },
