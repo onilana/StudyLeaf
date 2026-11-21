@@ -1,8 +1,10 @@
 package com.example.ui.screens
 
 import android.graphics.Bitmap
+import android.util.LruCache
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -15,16 +17,18 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -36,15 +40,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BorderColor
@@ -73,12 +78,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -103,7 +110,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import com.studyleaf.R
 import com.example.data.engine.DocumentEngine
 import com.example.data.local.DocumentEntity
 import com.example.data.model.AnnotationColorOption
@@ -112,7 +118,10 @@ import com.example.data.model.DocumentFormat
 import com.example.data.model.NormalizedPoint
 import com.example.data.model.PageAnnotation
 import com.example.ui.components.StudyLeafWindowSize
+import com.studyleaf.R
+import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 @Composable
 fun PdfReaderScreen(
@@ -131,10 +140,11 @@ fun PdfReaderScreen(
 ) {
     BackHandler(onBack = onBack)
 
-    var currentPage by remember(document.id) { mutableIntStateOf(0) }
+    val scope = rememberCoroutineScope()
+    val listState = rememberLazyListState()
+
     var totalPages by remember(document.id) { mutableIntStateOf(document.pageCount.coerceAtLeast(1)) }
-    var pageBitmap by remember(document.id, currentPage) { mutableStateOf<Bitmap?>(null) }
-    var isLoadingPage by remember(document.id, currentPage) { mutableStateOf(true) }
+    val pageCache = remember(document.id, document.filePath) { LruCache<Int, Bitmap>(8) }
 
     var chromeVisible by remember { mutableStateOf(true) }
     var toolsMenuExpanded by remember { mutableStateOf(false) }
@@ -143,17 +153,40 @@ fun PdfReaderScreen(
     var activeTool by remember { mutableStateOf(AnnotationTool.PAN) }
     var activeColor by remember { mutableStateOf(AnnotationColorOption.YELLOW) }
 
-    var zoomScale by remember(currentPage) { mutableFloatStateOf(1f) }
-    var panOffset by remember(currentPage) { mutableStateOf(Offset.Zero) }
+    var zoomScale by remember(document.id) { mutableFloatStateOf(1f) }
+    var panOffsetX by remember(document.id) { mutableFloatStateOf(0f) }
 
+    var draftPageIndex by remember { mutableStateOf<Int?>(null) }
     val draftPoints = remember { mutableStateListOf<NormalizedPoint>() }
-    var pendingNotePosition by remember { mutableStateOf<NormalizedPoint?>(null) }
+    val redoStack = remember(document.id) { mutableStateListOf<PageAnnotation>() }
+    var pendingNoteTarget by remember { mutableStateOf<Pair<Int, NormalizedPoint>?>(null) }
     var noteInputText by remember { mutableStateOf("") }
     var inspectingNote by remember { mutableStateOf<PageAnnotation?>(null) }
 
-    val pageAnnotations = remember(annotations, currentPage) {
-        annotations.filter { it.pageIndex == currentPage }
+    val addAnnotationAndResetRedo: (PageAnnotation) -> Unit = { annotation ->
+        redoStack.clear()
+        onAddAnnotation(annotation)
     }
+
+    val currentPage by remember(totalPages) {
+        derivedStateOf {
+            val visible = listState.layoutInfo.visibleItemsInfo
+            if (visible.isEmpty()) {
+                listState.firstVisibleItemIndex.coerceIn(0, (totalPages - 1).coerceAtLeast(0))
+            } else {
+                val viewportCenter =
+                    (listState.layoutInfo.viewportStartOffset + listState.layoutInfo.viewportEndOffset) / 2
+                visible.minByOrNull { item ->
+                    abs((item.offset + item.size / 2) - viewportCenter)
+                }?.index?.coerceIn(0, (totalPages - 1).coerceAtLeast(0)) ?: 0
+            }
+        }
+    }
+
+    val annotationsByPage = remember(annotations) {
+        annotations.groupBy { it.pageIndex }
+    }
+    val currentPageAnnotations = annotationsByPage[currentPage].orEmpty()
 
     LaunchedEffect(document.id, document.filePath) {
         if (document.format == DocumentFormat.PDF || document.format == DocumentFormat.SCAN) {
@@ -163,17 +196,11 @@ fun PdfReaderScreen(
         }
     }
 
-    LaunchedEffect(document.id, document.filePath, currentPage) {
-        isLoadingPage = true
-        pageBitmap = engine.renderPdfPage(document.filePath, currentPage, targetWidthPx = 1440)
-        isLoadingPage = false
-    }
-
     // Add Sticky Note dialog
-    if (pendingNotePosition != null) {
+    if (pendingNoteTarget != null) {
         AlertDialog(
             onDismissRequest = {
-                pendingNotePosition = null
+                pendingNoteTarget = null
                 noteInputText = ""
             },
             title = { Text(stringResource(R.string.reader_add_note_title)) },
@@ -191,20 +218,20 @@ fun PdfReaderScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        val pos = pendingNotePosition
-                        if (pos != null && noteInputText.isNotBlank()) {
-                            onAddAnnotation(
+                        val target = pendingNoteTarget
+                        if (target != null && noteInputText.isNotBlank()) {
+                            addAnnotationAndResetRedo(
                                 PageAnnotation(
                                     documentId = document.id,
-                                    pageIndex = currentPage,
+                                    pageIndex = target.first,
                                     tool = AnnotationTool.NOTE,
                                     colorHex = activeColor.hex,
-                                    points = listOf(pos),
+                                    points = listOf(target.second),
                                     noteText = noteInputText.trim()
                                 )
                             )
                         }
-                        pendingNotePosition = null
+                        pendingNoteTarget = null
                         noteInputText = ""
                     },
                     modifier = Modifier.testTag("save_sticky_note_button")
@@ -214,7 +241,7 @@ fun PdfReaderScreen(
             },
             dismissButton = {
                 TextButton(onClick = {
-                    pendingNotePosition = null
+                    pendingNoteTarget = null
                     noteInputText = ""
                 }) {
                     Text(stringResource(R.string.action_cancel))
@@ -250,10 +277,16 @@ fun PdfReaderScreen(
         )
     }
 
+    val topContentPadding by animateDpAsState(
+        targetValue = if (chromeVisible) 52.dp else 10.dp,
+        label = "reader_top_padding"
+    )
+    val horizontalPagePadding = if (windowSize == StudyLeafWindowSize.COMPACT) 10.dp else 20.dp
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surfaceContainerLowest)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh)
     ) {
         Row(modifier = Modifier.fillMaxSize()) {
             AnimatedVisibility(visible = showThumbnailRail && totalPages > 1) {
@@ -262,11 +295,15 @@ fun PdfReaderScreen(
                     totalPages = totalPages,
                     currentPage = currentPage,
                     engine = engine,
-                    onSelectPage = { currentPage = it }
+                    onSelectPage = { pageIdx ->
+                        scope.launch {
+                            listState.animateScrollToItem(pageIdx)
+                        }
+                    }
                 )
             }
 
-            // Fullscreen Document Canvas
+            // Continuous Vertical Scrollable Multi-Page Document Canvas
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -274,235 +311,133 @@ fun PdfReaderScreen(
                     .clipToBounds()
                     .pointerInput(activeTool) {
                         if (activeTool == AnnotationTool.PAN) {
-                            detectTransformGestures { _, pan, zoom, _ ->
-                                val newScale = (zoomScale * zoom).coerceIn(1f, 3.5f)
-                                zoomScale = newScale
-                                panOffset = if (newScale <= 1.01f) {
-                                    Offset.Zero
-                                } else {
-                                    Offset(
-                                        (panOffset.x + pan.x).coerceIn(-700f, 700f),
-                                        (panOffset.y + pan.y).coerceIn(-900f, 900f)
-                                    )
-                                }
-                            }
-                        }
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                if (isLoadingPage) {
-                    CircularProgressIndicator(color = MaterialTheme.colorScheme.secondary)
-                } else if (pageBitmap != null) {
-                    val bmp = pageBitmap!!
-                    val aspect = (bmp.width.toFloat() / bmp.height.toFloat()).coerceIn(0.45f, 1.8f)
-                    var sheetSize by remember { mutableStateOf(IntSize.Zero) }
-
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 2.dp, vertical = 2.dp)
-                            .aspectRatio(aspect, matchHeightConstraintsFirst = false)
-                            .graphicsLayer(
-                                scaleX = zoomScale,
-                                scaleY = zoomScale,
-                                translationX = panOffset.x,
-                                translationY = panOffset.y
-                            )
-                            .onSizeChanged { sheetSize = it }
-                            .pointerInput(activeTool, activeColor, currentPage, sheetSize) {
-                                if (activeTool == AnnotationTool.PAN) {
-                                    detectTapGestures(
-                                        onTap = {
-                                            if (toolsMenuExpanded) {
-                                                toolsMenuExpanded = false
+                            awaitEachGesture {
+                                awaitFirstDown(requireUnconsumed = false)
+                                do {
+                                    val event = awaitPointerEvent()
+                                    val pressedCount = event.changes.count { it.pressed }
+                                    if (pressedCount >= 2) {
+                                        val zoom = event.calculateZoom()
+                                        val pan = event.calculatePan()
+                                        if (zoom != 1f || pan != Offset.Zero) {
+                                            val nextScale = (zoomScale * zoom).coerceIn(1f, 3.5f)
+                                            zoomScale = nextScale
+                                            panOffsetX = if (nextScale <= 1.02f) {
+                                                0f
                                             } else {
-                                                chromeVisible = !chromeVisible
+                                                (panOffsetX + pan.x).coerceIn(-650f, 650f)
                                             }
-                                        },
-                                        onDoubleTap = {
-                                            if (zoomScale > 1.1f) {
-                                                zoomScale = 1f
-                                                panOffset = Offset.Zero
-                                            } else {
-                                                zoomScale = 2f
-                                            }
+                                            event.changes.forEach { it.consume() }
                                         }
-                                    )
-                                } else if (activeTool == AnnotationTool.NOTE) {
-                                    detectTapGestures { offset ->
-                                        if (sheetSize.width > 0 && sheetSize.height > 0) {
-                                            pendingNotePosition = NormalizedPoint(
-                                                (offset.x / sheetSize.width).coerceIn(0.05f, 0.95f),
-                                                (offset.y / sheetSize.height).coerceIn(0.05f, 0.95f)
-                                            )
+                                    } else if (pressedCount == 1 && zoomScale > 1.02f) {
+                                        val pan = event.calculatePan()
+                                        if (abs(pan.x) > abs(pan.y) * 0.8f) {
+                                            panOffsetX = (panOffsetX + pan.x).coerceIn(-650f, 650f)
+                                            event.changes.forEach { it.consume() }
                                         }
                                     }
-                                } else {
-                                    detectDragGestures(
-                                        onDragStart = { start ->
-                                            draftPoints.clear()
-                                            if (sheetSize.width > 0 && sheetSize.height > 0) {
-                                                draftPoints.add(
-                                                    NormalizedPoint(
-                                                        (start.x / sheetSize.width).coerceIn(0f, 1f),
-                                                        (start.y / sheetSize.height).coerceIn(0f, 1f)
-                                                    )
-                                                )
-                                            }
-                                        },
-                                        onDrag = { change, _ ->
-                                            change.consume()
-                                            if (sheetSize.width > 0 && sheetSize.height > 0) {
-                                                val p = change.position
-                                                draftPoints.add(
-                                                    NormalizedPoint(
-                                                        (p.x / sheetSize.width).coerceIn(0f, 1f),
-                                                        (p.y / sheetSize.height).coerceIn(0f, 1f)
-                                                    )
-                                                )
-                                            }
-                                        },
-                                        onDragEnd = {
-                                            if (draftPoints.size >= 2) {
-                                                val committed = when (activeTool) {
-                                                    AnnotationTool.HIGHLIGHT,
-                                                    AnnotationTool.UNDERLINE,
-                                                    AnnotationTool.STRIKETHROUGH -> {
-                                                        val first = draftPoints.first()
-                                                        val last = draftPoints.last()
-                                                        listOf(first, NormalizedPoint(last.x, first.y))
-                                                    }
-                                                    else -> draftPoints.toList()
-                                                }
-                                                onAddAnnotation(
-                                                    PageAnnotation(
-                                                        documentId = document.id,
-                                                        pageIndex = currentPage,
-                                                        tool = activeTool,
-                                                        colorHex = activeColor.hex,
-                                                        points = committed
-                                                    )
-                                                )
-                                            }
-                                            draftPoints.clear()
-                                        },
-                                        onDragCancel = { draftPoints.clear() }
-                                    )
-                                }
-                            },
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color.White,
-                        shadowElevation = 2.dp
-                    ) {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            Image(
-                                bitmap = bmp.asImageBitmap(),
-                                contentDescription = "${document.title} page ${currentPage + 1}",
-                                contentScale = ContentScale.FillBounds,
-                                modifier = Modifier.fillMaxSize()
-                            )
-
-                            Canvas(modifier = Modifier.fillMaxSize()) {
-                                val w = size.width
-                                val h = size.height
-
-                                fun drawStrokeAnnotation(tool: AnnotationTool, color: Color, pts: List<NormalizedPoint>) {
-                                    if (pts.size < 2) return
-                                    when (tool) {
-                                        AnnotationTool.HIGHLIGHT -> {
-                                            drawLine(
-                                                color = color.copy(alpha = 0.42f),
-                                                start = Offset(pts.first().x * w, pts.first().y * h),
-                                                end = Offset(pts.last().x * w, pts.first().y * h),
-                                                strokeWidth = 24f,
-                                                cap = StrokeCap.Round
-                                            )
-                                        }
-                                        AnnotationTool.UNDERLINE -> {
-                                            drawLine(
-                                                color = color,
-                                                start = Offset(pts.first().x * w, pts.first().y * h),
-                                                end = Offset(pts.last().x * w, pts.first().y * h),
-                                                strokeWidth = 5f,
-                                                cap = StrokeCap.Round
-                                            )
-                                        }
-                                        AnnotationTool.STRIKETHROUGH -> {
-                                            drawLine(
-                                                color = color,
-                                                start = Offset(pts.first().x * w, pts.first().y * h),
-                                                end = Offset(pts.last().x * w, pts.first().y * h),
-                                                strokeWidth = 5f,
-                                                cap = StrokeCap.Butt
-                                            )
-                                        }
-                                        AnnotationTool.PEN -> {
-                                            val path = Path().apply {
-                                                moveTo(pts.first().x * w, pts.first().y * h)
-                                                for (i in 1 until pts.size) {
-                                                    lineTo(pts[i].x * w, pts[i].y * h)
-                                                }
-                                            }
-                                            drawPath(
-                                                path = path,
-                                                color = color,
-                                                style = Stroke(
-                                                    width = 6f,
-                                                    cap = StrokeCap.Round,
-                                                    join = StrokeJoin.Round
-                                                )
-                                            )
-                                        }
-                                        else -> Unit
-                                    }
-                                }
-
-                                pageAnnotations.forEach { ann ->
-                                    if (ann.tool != AnnotationTool.NOTE) {
-                                        drawStrokeAnnotation(ann.tool, Color(ann.colorHex), ann.points)
-                                    }
-                                }
-                                if (draftPoints.size >= 2) {
-                                    drawStrokeAnnotation(activeTool, activeColor.color, draftPoints)
-                                }
-                            }
-
-                            if (sheetSize.width > 0 && sheetSize.height > 0) {
-                                pageAnnotations.filter { it.tool == AnnotationTool.NOTE && it.points.isNotEmpty() }
-                                    .forEach { note ->
-                                        val pt = note.points.first()
-                                        val px = (pt.x * sheetSize.width).roundToInt() - 24
-                                        val py = (pt.y * sheetSize.height).roundToInt() - 24
-                                        Surface(
-                                            onClick = { inspectingNote = note },
-                                            modifier = Modifier
-                                                .offset { IntOffset(px.coerceAtLeast(4), py.coerceAtLeast(4)) }
-                                                .size(30.dp)
-                                                .testTag("sticky_note_pin_${note.id}"),
-                                            shape = CircleShape,
-                                            color = Color(note.colorHex),
-                                            shadowElevation = 3.dp,
-                                            border = BorderStroke(1.5.dp, Color.White)
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.StickyNote2,
-                                                    contentDescription = "Open sticky note",
-                                                    tint = Color(0xFF012D1D),
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
-                                        }
-                                    }
+                                } while (event.changes.any { it.pressed })
                             }
                         }
                     }
-                } else {
-                    Text(
-                        text = "Unable to render document page.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+            ) {
+                LazyColumn(
+                    state = listState,
+                    userScrollEnabled = activeTool == AnnotationTool.PAN,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .statusBarsPadding()
+                        .navigationBarsPadding()
+                        .graphicsLayer(
+                            scaleX = zoomScale,
+                            scaleY = zoomScale,
+                            translationX = panOffsetX
+                        )
+                        .testTag("reader_pages_list"),
+                    contentPadding = PaddingValues(
+                        top = topContentPadding,
+                        bottom = 24.dp,
+                        start = horizontalPagePadding,
+                        end = horizontalPagePadding
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    items(
+                        items = (0 until totalPages).toList(),
+                        key = { pageIdx -> "${document.id}_$pageIdx" }
+                    ) { pageIdx ->
+                        PdfScrollPageCard(
+                            document = document,
+                            pageIndex = pageIdx,
+                            engine = engine,
+                            pageCache = pageCache,
+                            pageAnnotations = annotationsByPage[pageIdx].orEmpty(),
+                            activeTool = activeTool,
+                            activeColor = activeColor,
+                            draftPoints = if (draftPageIndex == pageIdx) draftPoints else emptyList(),
+                            onTapPage = {
+                                if (toolsMenuExpanded) {
+                                    toolsMenuExpanded = false
+                                } else {
+                                    chromeVisible = !chromeVisible
+                                }
+                            },
+                            onDoubleTapPage = {
+                                if (zoomScale > 1.1f) {
+                                    zoomScale = 1f
+                                    panOffsetX = 0f
+                                } else {
+                                    zoomScale = 2f
+                                }
+                            },
+                            onRequestAddNote = { point ->
+                                pendingNoteTarget = pageIdx to point
+                            },
+                            onInspectNote = { note ->
+                                inspectingNote = note
+                            },
+                            onDraftStart = { startPt ->
+                                draftPageIndex = pageIdx
+                                draftPoints.clear()
+                                draftPoints.add(startPt)
+                            },
+                            onDraftMove = { pt ->
+                                if (draftPageIndex == pageIdx) {
+                                    draftPoints.add(pt)
+                                }
+                            },
+                            onDraftEnd = {
+                                if (draftPageIndex == pageIdx && draftPoints.size >= 2) {
+                                    val committed = when (activeTool) {
+                                        AnnotationTool.HIGHLIGHT,
+                                        AnnotationTool.UNDERLINE,
+                                        AnnotationTool.STRIKETHROUGH -> {
+                                            val first = draftPoints.first()
+                                            val last = draftPoints.last()
+                                            listOf(first, NormalizedPoint(last.x, first.y))
+                                        }
+                                        else -> draftPoints.toList()
+                                    }
+                                    addAnnotationAndResetRedo(
+                                        PageAnnotation(
+                                            documentId = document.id,
+                                            pageIndex = pageIdx,
+                                            tool = activeTool,
+                                            colorHex = activeColor.hex,
+                                            points = committed
+                                        )
+                                    )
+                                }
+                                draftPoints.clear()
+                                draftPageIndex = null
+                            },
+                            onDraftCancel = {
+                                draftPoints.clear()
+                                draftPageIndex = null
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -517,7 +452,7 @@ fun PdfReaderScreen(
             Column(modifier = Modifier.fillMaxWidth()) {
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.92f),
+                    color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.94f),
                     tonalElevation = 2.dp,
                     shadowElevation = 2.dp
                 ) {
@@ -773,26 +708,51 @@ fun PdfReaderScreen(
                                 }
                             }
 
-                            if (pageAnnotations.isNotEmpty()) {
-                                VerticalDivider(
-                                    modifier = Modifier
-                                        .height(22.dp)
-                                        .padding(horizontal = 3.dp),
-                                    color = MaterialTheme.colorScheme.outlineVariant
-                                )
-                                CompactReaderToolButton(
-                                    icon = Icons.AutoMirrored.Filled.Undo,
-                                    label = "Undo",
-                                    selected = false,
-                                    onClick = { pageAnnotations.lastOrNull()?.let { onDeleteAnnotation(it.id) } },
-                                    tag = "dock_undo_button"
-                                )
+                            VerticalDivider(
+                                modifier = Modifier
+                                    .height(22.dp)
+                                    .padding(horizontal = 3.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant
+                            )
+
+                            val undoTarget = currentPageAnnotations.lastOrNull() ?: annotations.lastOrNull()
+                            CompactReaderToolButton(
+                                icon = Icons.AutoMirrored.Filled.Undo,
+                                label = "Undo",
+                                selected = false,
+                                enabled = undoTarget != null,
+                                onClick = {
+                                    undoTarget?.let { target ->
+                                        redoStack.add(target.copy(id = 0L))
+                                        onDeleteAnnotation(target.id)
+                                    }
+                                },
+                                tag = "dock_undo_button"
+                            )
+                            CompactReaderToolButton(
+                                icon = Icons.AutoMirrored.Filled.Redo,
+                                label = "Redo",
+                                selected = false,
+                                enabled = redoStack.isNotEmpty(),
+                                onClick = {
+                                    if (redoStack.isNotEmpty()) {
+                                        val restored = redoStack.removeAt(redoStack.lastIndex)
+                                        onAddAnnotation(restored.copy(id = 0L))
+                                    }
+                                },
+                                tag = "dock_redo_button"
+                            )
+
+                            if (currentPageAnnotations.isNotEmpty()) {
                                 CompactReaderToolButton(
                                     icon = Icons.Filled.DeleteSweep,
                                     label = "Clear",
                                     selected = false,
                                     tintOverride = MaterialTheme.colorScheme.error,
-                                    onClick = { onClearPageAnnotations(currentPage) },
+                                    onClick = {
+                                        redoStack.removeAll { it.pageIndex == currentPage }
+                                        onClearPageAnnotations(currentPage)
+                                    },
                                     tag = "dock_clear_page_button"
                                 )
                             }
@@ -801,61 +761,238 @@ fun PdfReaderScreen(
                 }
             }
         }
+    }
+}
 
-        // Minimal Bottom Page Switcher Pill (only for multi-page docs when chrome visible)
-        AnimatedVisibility(
-            visible = chromeVisible && totalPages > 1,
-            enter = fadeIn() + slideInVertically { it },
-            exit = fadeOut() + slideOutVertically { it },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .navigationBarsPadding()
-                .padding(bottom = 10.dp)
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.86f),
-                shadowElevation = 4.dp
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    IconButton(
-                        onClick = { if (currentPage > 0) currentPage-- },
-                        enabled = currentPage > 0,
-                        modifier = Modifier
-                            .size(30.dp)
-                            .testTag("reader_prev_page")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                            contentDescription = "Previous page",
-                            tint = MaterialTheme.colorScheme.inverseOnSurface,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    Text(
-                        text = "${currentPage + 1} / $totalPages",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.inverseOnSurface,
-                        modifier = Modifier.padding(horizontal = 4.dp)
+@Composable
+private fun PdfScrollPageCard(
+    document: DocumentEntity,
+    pageIndex: Int,
+    engine: DocumentEngine,
+    pageCache: LruCache<Int, Bitmap>,
+    pageAnnotations: List<PageAnnotation>,
+    activeTool: AnnotationTool,
+    activeColor: AnnotationColorOption,
+    draftPoints: List<NormalizedPoint>,
+    onTapPage: () -> Unit,
+    onDoubleTapPage: () -> Unit,
+    onRequestAddNote: (NormalizedPoint) -> Unit,
+    onInspectNote: (PageAnnotation) -> Unit,
+    onDraftStart: (NormalizedPoint) -> Unit,
+    onDraftMove: (NormalizedPoint) -> Unit,
+    onDraftEnd: () -> Unit,
+    onDraftCancel: () -> Unit
+) {
+    var bitmap by remember(document.id, document.filePath, pageIndex) {
+        mutableStateOf(pageCache.get(pageIndex))
+    }
+    var isLoading by remember(document.id, document.filePath, pageIndex) {
+        mutableStateOf(bitmap == null)
+    }
+    var sheetSize by remember { mutableStateOf(IntSize.Zero) }
+
+    LaunchedEffect(document.id, document.filePath, pageIndex) {
+        val cached = pageCache.get(pageIndex)
+        if (cached != null) {
+            bitmap = cached
+            isLoading = false
+        } else {
+            isLoading = true
+            val rendered = engine.renderPdfPage(document.filePath, pageIndex, targetWidthPx = 1440)
+            if (rendered != null) {
+                pageCache.put(pageIndex, rendered)
+            }
+            bitmap = rendered
+            isLoading = false
+        }
+    }
+
+    val aspect = remember(bitmap) {
+        bitmap?.let { (it.width.toFloat() / it.height.toFloat()).coerceIn(0.45f, 1.8f) } ?: 0.707f
+    }
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .widthIn(max = 860.dp)
+            .aspectRatio(aspect)
+            .onSizeChanged { sheetSize = it }
+            .pointerInput(activeTool, activeColor, pageIndex, sheetSize) {
+                if (activeTool == AnnotationTool.PAN) {
+                    detectTapGestures(
+                        onTap = { onTapPage() },
+                        onDoubleTap = { onDoubleTapPage() }
                     )
-                    IconButton(
-                        onClick = { if (currentPage < totalPages - 1) currentPage++ },
-                        enabled = currentPage < totalPages - 1,
-                        modifier = Modifier
-                            .size(30.dp)
-                            .testTag("reader_next_page")
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "Next page",
-                            tint = MaterialTheme.colorScheme.inverseOnSurface,
-                            modifier = Modifier.size(18.dp)
-                        )
+                } else if (activeTool == AnnotationTool.NOTE) {
+                    detectTapGestures { offset ->
+                        if (sheetSize.width > 0 && sheetSize.height > 0) {
+                            onRequestAddNote(
+                                NormalizedPoint(
+                                    (offset.x / sheetSize.width).coerceIn(0.05f, 0.95f),
+                                    (offset.y / sheetSize.height).coerceIn(0.05f, 0.95f)
+                                )
+                            )
+                        }
                     }
+                } else {
+                    detectDragGestures(
+                        onDragStart = { start ->
+                            if (sheetSize.width > 0 && sheetSize.height > 0) {
+                                onDraftStart(
+                                    NormalizedPoint(
+                                        (start.x / sheetSize.width).coerceIn(0f, 1f),
+                                        (start.y / sheetSize.height).coerceIn(0f, 1f)
+                                    )
+                                )
+                            }
+                        },
+                        onDrag = { change, _ ->
+                            change.consume()
+                            if (sheetSize.width > 0 && sheetSize.height > 0) {
+                                val p = change.position
+                                onDraftMove(
+                                    NormalizedPoint(
+                                        (p.x / sheetSize.width).coerceIn(0f, 1f),
+                                        (p.y / sheetSize.height).coerceIn(0f, 1f)
+                                    )
+                                )
+                            }
+                        },
+                        onDragEnd = onDraftEnd,
+                        onDragCancel = onDraftCancel
+                    )
+                }
+            }
+            .testTag("reader_page_card_$pageIndex"),
+        shape = RoundedCornerShape(2.dp),
+        color = Color.White,
+        shadowElevation = 2.dp
+    ) {
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            when {
+                isLoading -> {
+                    CircularProgressIndicator(
+                        color = MaterialTheme.colorScheme.secondary,
+                        modifier = Modifier.size(28.dp),
+                        strokeWidth = 2.5.dp
+                    )
+                }
+                bitmap != null -> {
+                    Image(
+                        bitmap = bitmap!!.asImageBitmap(),
+                        contentDescription = "${document.title} page ${pageIndex + 1}",
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier.fillMaxSize()
+                    )
+
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val w = size.width
+                        val h = size.height
+
+                        fun drawStrokeAnnotation(
+                            tool: AnnotationTool,
+                            color: Color,
+                            pts: List<NormalizedPoint>
+                        ) {
+                            if (pts.size < 2) return
+                            when (tool) {
+                                AnnotationTool.HIGHLIGHT -> {
+                                    drawLine(
+                                        color = color.copy(alpha = 0.42f),
+                                        start = Offset(pts.first().x * w, pts.first().y * h),
+                                        end = Offset(pts.last().x * w, pts.first().y * h),
+                                        strokeWidth = 24f,
+                                        cap = StrokeCap.Round
+                                    )
+                                }
+                                AnnotationTool.UNDERLINE -> {
+                                    drawLine(
+                                        color = color,
+                                        start = Offset(pts.first().x * w, pts.first().y * h),
+                                        end = Offset(pts.last().x * w, pts.first().y * h),
+                                        strokeWidth = 5f,
+                                        cap = StrokeCap.Round
+                                    )
+                                }
+                                AnnotationTool.STRIKETHROUGH -> {
+                                    drawLine(
+                                        color = color,
+                                        start = Offset(pts.first().x * w, pts.first().y * h),
+                                        end = Offset(pts.last().x * w, pts.first().y * h),
+                                        strokeWidth = 5f,
+                                        cap = StrokeCap.Butt
+                                    )
+                                }
+                                AnnotationTool.PEN -> {
+                                    val path = Path().apply {
+                                        moveTo(pts.first().x * w, pts.first().y * h)
+                                        for (i in 1 until pts.size) {
+                                            lineTo(pts[i].x * w, pts[i].y * h)
+                                        }
+                                    }
+                                    drawPath(
+                                        path = path,
+                                        color = color,
+                                        style = Stroke(
+                                            width = 6f,
+                                            cap = StrokeCap.Round,
+                                            join = StrokeJoin.Round
+                                        )
+                                    )
+                                }
+                                else -> Unit
+                            }
+                        }
+
+                        pageAnnotations.forEach { ann ->
+                            if (ann.tool != AnnotationTool.NOTE) {
+                                drawStrokeAnnotation(ann.tool, Color(ann.colorHex), ann.points)
+                            }
+                        }
+                        if (draftPoints.size >= 2) {
+                            drawStrokeAnnotation(activeTool, activeColor.color, draftPoints)
+                        }
+                    }
+
+                    if (sheetSize.width > 0 && sheetSize.height > 0) {
+                        pageAnnotations.filter { it.tool == AnnotationTool.NOTE && it.points.isNotEmpty() }
+                            .forEach { note ->
+                                val pt = note.points.first()
+                                val px = (pt.x * sheetSize.width).roundToInt() - 24
+                                val py = (pt.y * sheetSize.height).roundToInt() - 24
+                                Surface(
+                                    onClick = { onInspectNote(note) },
+                                    modifier = Modifier
+                                        .align(Alignment.TopStart)
+                                        .offset { IntOffset(px.coerceAtLeast(4), py.coerceAtLeast(4)) }
+                                        .size(30.dp)
+                                        .testTag("sticky_note_pin_${note.id}"),
+                                    shape = CircleShape,
+                                    color = Color(note.colorHex),
+                                    shadowElevation = 3.dp,
+                                    border = BorderStroke(1.5.dp, Color.White)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Filled.StickyNote2,
+                                            contentDescription = "Open sticky note",
+                                            tint = Color(0xFF012D1D),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                    }
+                }
+                else -> {
+                    Text(
+                        text = "Unable to render page ${pageIndex + 1}.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
@@ -869,25 +1006,28 @@ private fun CompactReaderToolButton(
     selected: Boolean,
     onClick: () -> Unit,
     tag: String,
+    enabled: Boolean = true,
     tintOverride: Color? = null
 ) {
     Surface(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier
             .size(34.dp)
             .testTag(tag),
         shape = CircleShape,
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
+        color = if (selected && enabled) MaterialTheme.colorScheme.secondaryContainer else Color.Transparent
     ) {
         Box(contentAlignment = Alignment.Center) {
+            val baseTint = tintOverride ?: if (selected) {
+                MaterialTheme.colorScheme.onSecondaryContainer
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = tintOverride ?: if (selected) {
-                    MaterialTheme.colorScheme.onSecondaryContainer
-                } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
-                },
+                tint = if (enabled) baseTint else baseTint.copy(alpha = 0.35f),
                 modifier = Modifier.size(18.dp)
             )
         }
@@ -914,7 +1054,7 @@ private fun ThumbnailSideRail(
                 .fillMaxSize()
                 .statusBarsPadding()
                 .navigationBarsPadding(),
-            contentPadding = PaddingValues(top = 56.dp, bottom = 64.dp, start = 10.dp, end = 10.dp),
+            contentPadding = PaddingValues(top = 56.dp, bottom = 24.dp, start = 10.dp, end = 10.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             items((0 until totalPages).toList(), key = { it }) { pageIdx ->
