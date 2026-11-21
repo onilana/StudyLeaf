@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Crisp folded document sheet centered within 66dp safe zone -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M34,26 C30.69,26 28,28.69 28,32 L28,76 C28,79.31 30.69,82 34,82 L74,82 C77.31,82 80,79.31 80,76 L80,44 L62,26 Z" />
+    <!-- Folded corner accent -->
+    <path
+        android:fillColor="#FFC1ECD4"
+        android:pathData="M62,26 L62,38 C62,41.31 64.69,44 68,44 L80,44 Z" />
+    <!-- Botanical StudyLeaf emblem overlaid in deep mint & emerald -->
+    <path
+        android:fillColor="#FF006C48"
+        android:pathData="M43,69 C43,54 53,45 67,44 C66,58 58,69 43,69 Z" />
+    <path
+        android:fillColor="#FF92F7C3"
+        android:pathData="M43,69 C48,62 54,56 61,51 C56,57 50,63 45,71 L43,69 Z" />
+    <!-- Subtle document text lines -->
+    <path
+        android:fillColor="#FF717973"
+        android:pathData="M36,38 L54,38 L54,41.5 L36,41.5 Z" />
+    <path
+        android:fillColor="#FFA5D0B9"
+        android:pathData="M36,46 L48,46 L48,49.5 L36,49.5 Z" />
+</vector>

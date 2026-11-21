@@ -1,0 +1,260 @@
+---
+name: StudyLeaf Material 3
+colors:
+  surface: '#f9f9fc'
+  surface-dim: '#dadadc'
+  surface-bright: '#f9f9fc'
+  surface-container-lowest: '#ffffff'
+  surface-container-low: '#f3f3f6'
+  surface-container: '#eeeef0'
+  surface-container-high: '#e8e8ea'
+  surface-container-highest: '#e2e2e5'
+  on-surface: '#1a1c1e'
+  on-surface-variant: '#414844'
+  inverse-surface: '#2f3133'
+  inverse-on-surface: '#f0f0f3'
+  outline: '#717973'
+  outline-variant: '#c1c8c2'
+  surface-tint: '#3f6653'
+  primary: '#012d1d'
+  on-primary: '#ffffff'
+  primary-container: '#1b4332'
+  on-primary-container: '#86af99'
+  inverse-primary: '#a5d0b9'
+  secondary: '#006c48'
+  on-secondary: '#ffffff'
+  secondary-container: '#92f7c3'
+  on-secondary-container: '#00734d'
+  tertiary: '#002c28'
+  on-tertiary: '#ffffff'
+  tertiary-container: '#00443e'
+  on-tertiary-container: '#18baac'
+  error: '#ba1a1a'
+  on-error: '#ffffff'
+  error-container: '#ffdad6'
+  on-error-container: '#93000a'
+  primary-fixed: '#c1ecd4'
+  primary-fixed-dim: '#a5d0b9'
+  on-primary-fixed: '#002114'
+  on-primary-fixed-variant: '#274e3d'
+  secondary-fixed: '#92f7c3'
+  secondary-fixed-dim: '#75daa8'
+  on-secondary-fixed: '#002113'
+  on-secondary-fixed-variant: '#005235'
+  tertiary-fixed: '#70f8e8'
+  tertiary-fixed-dim: '#4fdbcc'
+  on-tertiary-fixed: '#00201d'
+  on-tertiary-fixed-variant: '#005049'
+  background: '#f9f9fc'
+  on-background: '#1a1c1e'
+  surface-variant: '#e2e2e5'
+  surface-light: '#F8F9FA'
+  surface-container-light: '#F1F5F2'
+  surface-container-high-light: '#E7ECE8'
+  surface-dark: '#121413'
+  surface-container-dark: '#1A1E1C'
+  surface-container-high-dark: '#222724'
+  doc-pdf: '#D9383A'
+  doc-word: '#2B579A'
+  doc-image: '#E58E26'
+  doc-scanner: '#0E8388'
+  annotation-yellow: '#FFD166'
+  annotation-green: '#74C69D'
+  annotation-blue: '#4EA8DE'
+  annotation-pink: '#F28482'
+typography:
+  display-lg:
+    fontFamily: Roboto Flex
+    fontSize: 57px
+    fontWeight: '400'
+    lineHeight: 64px
+    letterSpacing: -0.25px
+  display-md:
+    fontFamily: Roboto Flex
+    fontSize: 45px
+    fontWeight: '400'
+    lineHeight: 52px
+  display-sm:
+    fontFamily: Roboto Flex
+    fontSize: 36px
+    fontWeight: '400'
+    lineHeight: 44px
+  headline-lg:
+    fontFamily: Roboto Flex
+    fontSize: 32px
+    fontWeight: '600'
+    lineHeight: 40px
+  headline-lg-mobile:
+    fontFamily: Roboto Flex
+    fontSize: 28px
+    fontWeight: '600'
+    lineHeight: 36px
+  headline-md:
+    fontFamily: Roboto Flex
+    fontSize: 28px
+    fontWeight: '600'
+    lineHeight: 36px
+  headline-sm:
+    fontFamily: Roboto Flex
+    fontSize: 24px
+    fontWeight: '500'
+    lineHeight: 32px
+  title-lg:
+    fontFamily: Roboto Flex
+    fontSize: 22px
+    fontWeight: '500'
+    lineHeight: 28px
+  title-md:
+    fontFamily: Roboto Flex
+    fontSize: 16px
+    fontWeight: '600'
+    lineHeight: 24px
+    letterSpacing: 0.15px
+  title-sm:
+    fontFamily: Roboto Flex
+    fontSize: 14px
+    fontWeight: '500'
+    lineHeight: 20px
+    letterSpacing: 0.1px
+  body-lg:
+    fontFamily: Roboto Flex
+    fontSize: 16px
+    fontWeight: '400'
+    lineHeight: 24px
+    letterSpacing: 0.5px
+  body-md:
+    fontFamily: Roboto Flex
+    fontSize: 14px
+    fontWeight: '400'
+    lineHeight: 20px
+    letterSpacing: 0.25px
+  body-sm:
+    fontFamily: Roboto Flex
+    fontSize: 12px
+    fontWeight: '400'
+    lineHeight: 16px
+    letterSpacing: 0.4px
+  label-lg:
+    fontFamily: Roboto Flex
+    fontSize: 14px
+    fontWeight: '500'
+    lineHeight: 20px
+    letterSpacing: 0.1px
+  label-md:
+    fontFamily: Roboto Flex
+    fontSize: 12px
+    fontWeight: '500'
+    lineHeight: 16px
+    letterSpacing: 0.5px
+  label-sm:
+    fontFamily: Roboto Flex
+    fontSize: 11px
+    fontWeight: '500'
+    lineHeight: 16px
+    letterSpacing: 0.5px
+rounded:
+  sm: 0.25rem
+  DEFAULT: 0.5rem
+  md: 0.75rem
+  lg: 1rem
+  xl: 1.5rem
+  full: 9999px
+spacing:
+  gutter: 1rem
+  gutter-compact: 0.5rem
+  margin: 1rem
+  margin-expanded: 1.5rem
+  space-xs: 0.25rem
+  space-sm: 0.5rem
+  space-md: 1rem
+  space-lg: 1.5rem
+  space-xl: 2rem
+---
+
+## Brand & Style
+
+The design system establishes a quiet, focused, and dependable environment engineered for deep document engagement, on-device conversion, and offline productivity. It bridges functional utility with organic calm: an intentional departure from sterile, high-stress enterprise utilities. The tactile clarity of Google Material 3 serves as the foundational grammar, emphasizing content readability, spatial hierarchy through tonal layering, and low cognitive friction during intensive academic and professional workflows.
+
+### Aesthetic Principles
+- **Biophilic Precision**: An organic palette anchored in deep forest greens and botanical mints that reduces eye strain during prolonged reading sessions while communicating local data sovereignty and security.
+- **Unobtrusive Utility**: Controls, chrome, and toolbars recede behind document canvases. Tooling surfaces emerge responsively and collapse cleanly during reading flows.
+- **Material 3 Tonal Depth**: Minimal structural lines and zero dramatic skeuomorphic drop shadows. Surfaces communicate hierarchy through calibrated luminance steps, tinted surface overlays, and crisp border boundaries.
+
+## Colors
+
+The color system derives from the Material 3 tonal palette logic. The primary hue anchors brand identity and primary interaction states, balanced by secondary and tertiary botanical accents that drive container backgrounds, active navigation indicators, and contextual progress states.
+
+### Semantic Document Channels
+Dedicated non-brand colors represent document formats uniformly throughout all conversion pipelines, filters, and file trees:
+- **PDF Accent (`#D9383A`)**: Reserved strictly for Adobe PDF artifacts, PDF conversion source targets, and destructive/critical warnings.
+- **Word Accent (`#2B579A`)**: Applied to DOC, DOCX, and text file operations.
+- **Image/Media Accent (`#E58E26`)**: Dictates visual conversion flows (JPG, PNG, WEBP) and OCR extraction cues.
+- **Scanner Accent (`#0E8388`)**: Dictates optical edge detection, crop adjustment handles, and perspective correction UI.
+
+### Theme Adaptation
+In dark mode, primary and secondary containers invert their tonal balance: deep forest backgrounds yield to high-chroma, lowered-luminance accents to prevent retina fatigue during low-light reading. Document surfaces maintain true contrast margins without blinding whites.
+
+## Typography
+
+The type scale strictly adopts Android standard Material 3 specifications powered by Roboto Flex, ensuring optimal metric rendering across all density scales (hdpi through xxxhdpi).
+
+### Application Hierarchy
+- **Display & Headline**: Anchors dashboard greetings, category landmarks, and large empty-state notices.
+- **Title Roles**: Drives top app bar titles, dialog headlines, section headers (`Recent Documents`, `PDF Tools`), and conversion batch cards.
+- **Body Roles**: Governs multi-line document metadata, extraction outputs, modal explanations, and on-screen help texts.
+- **Label Roles**: Powers navigation bar destinations, floating action button labels, file extension badges, interactive filter chips, and document annotation stamps.
+
+## Layout & Spacing
+
+The layout model implements a fluid 4-column structure on mobile devices (< 600dp) transitioning to an 8-column system on foldables/tablets (600dp - 840dp). Layouts leverage an 8dp baseline rhythm, utilizing 4dp subdivisions for micro-alignments such as chip inner padding and thumbnail badge offsets.
+
+### Structural Breakpoints
+- **Compact (< 600dp)**: Margin `1rem` (16dp), gutter `1rem` (16dp). Quick action tools render in a balanced 2-column card grid. Top app bar is single-tiered with an integrated or floating search component. Bottom navigation remains pinned.
+- **Medium (600dp - 839dp)**: Margin `1.5rem` (24dp), gutter `1rem` (16dp). Quick actions expand into a 4-column layout. The bottom navigation bar adapts into an expansive navigation rail on landscape orientations.
+- **Expanded (>= 840dp)**: Two-pane reading and file management layouts become active. Canvas center-stages the PDF document with an optional persistent thumbnail side-rail.
+
+## Elevation & Depth
+
+Visual hierarchy abandons deep, fuzzy drop shadows in favor of Material 3 surface tinting and calibrated ambient depth. Surfaces rise through discrete luminance steps and container color tokens.
+
+### Surface Hierarchy Levels
+- **Level 0 (Base Canvas)**: Flat surface background (`#F8F9FA` light / `#121413` dark). Houses the central reading scroll canvas and base views. Zero elevation.
+- **Level 1 (Card & Action Containers)**: 1dp virtual elevation. Subtly tinted container surfaces (`#F1F5F2` light / `#1A1E1C` dark) used for dashboard quick action tools, recent file list rows, and search input bars. Accompanied by a gentle `0px 1px 3px rgba(0, 0, 0, 0.08)` ambient shadow in light theme.
+- **Level 2 (Active/Hovered Sheets & Floating Bars)**: 3dp virtual elevation. Top app bars when scrolled under, bottom app toolbars in the PDF reader view, and contextual chip filters.
+- **Level 3 (Floating Action & Utility Overlays)**: 6dp virtual elevation. Quick action speed dials, document scanner camera control floating surfaces, and persistent page indicator pills.
+- **Level 4 (Dialogs & Sheets)**: 8dp - 12dp virtual elevation. Full-screen page reorder boards, conversion confirmation sheets, and margin configuration modals with scrim backing (`rgba(0, 0, 0, 0.4)`).
+
+## Shapes
+
+The shape system strictly reflects Material 3 standard geometry, expressing high corner radii across interactive boundaries to soften visual density and foster a calm reading posture.
+
+### Corner Token Assignments
+- **Extra Small (4dp / 0.25rem)**: Scanner manual perspective crop corner handles, selection highlight boundaries, and fine text underline controls.
+- **Small (8dp / 0.5rem)**: File format tags (`PDF`, `DOCX`, `PNG`), tooltips, and document thumbnail corner clips.
+- **Medium (12dp / 0.75rem)**: Standard text fields, compact utility buttons, batch progress cards, and sub-menus.
+- **Large (16dp / 1.0rem)**: Primary dashboard feature cards (2-column Quick Action grid), bottom sheet containers, dialog shells, and file manager preview cards.
+- **Extra Large (24dp / 1.5rem)**: Floating search bar base container and expanded document viewer controls.
+- **Full (Pill / 9999px)**: Floating Action Buttons (FABs), navigation bar active indicators, annotation tool select pills, and interactive filter chips.
+
+## Components
+
+### Buttons & Floating Actions
+- **Filled Button**: Primary brand green background with white text, shape `rounded-full` or `rounded-lg` (16dp), minimum height 48dp to satisfy mobile touch targets. Reserved for primary flow progression (e.g., "Convert to PDF", "Save Document").
+- **Tonal Button**: Mint container surface with deep green label text. Used for secondary inline actions (e.g., "Add Pages", "Select All").
+- **Outlined Button**: Hairline border (`1px solid`) with surface-tinted border lines. Applied to non-destructive secondary operations like "Cancel" or "Share Copy".
+- **Floating Action Button (FAB)**: Shape `rounded-xl` (16dp corner) or pill. Houses the primary hardware-accelerated document scan action (`+ Scan`) anchored to the bottom-right or centered in bottom navigation.
+
+### Cards & 2-Column Action Tiles
+- **Dashboard Action Cards**: Rendered with Shape `rounded-lg` (16dp). Background utilizes `surface-container-light` / `surface-container-dark`. Content displays an icon tinted with the operation channel (e.g., Red for PDF, Blue for Word), followed by an M3 `title-sm` action label and `body-sm` description.
+- **File List Items**: Single or two-line structured rows. Features a leading 40x40dp document preview box with rounded-sm (8dp) corners, bold title, metadata caption (`body-sm`), and trailing overflow/favorite button.
+
+### Chips & Annotation Controls
+- **Filter Chips**: Pill-shaped containers (`rounded-full`), height 32dp. Selected state leverages the secondary mint tint with a leading checkmark icon. Unselected states present a 1dp outline against the canvas background.
+- **Annotation Dock**: Horizontal floating pill dock anchored to the top or bottom of the PDF viewer. Houses discrete icon toggles: Text Highlight, Underline, Strikethrough, Freehand Pen, and Sticky Note. Active annotation tools gain a filled container circle highlight.
+
+### Document Scanner Overlay
+- **Perspective Canvas**: Semi-transparent dark scrim (`rgba(0, 0, 0, 0.55)`) displaying an active four-point interactive polygonal boundary wireframe tinted in Scanner Teal (`#0E8388`).
+- **Corner Handles**: 24dp circular drag targets with high-contrast inner rings for sub-millimeter edge realignment.
+
+### Navigation Bar
+- **M3 Navigation Bar**: Pinned to the screen base, container height 80dp, zero elevation with top border separator (`0.5px`). Displays 4 primary destinations: `Home`, `Tools`, `Files`, and `History`. Selected items reveal an active indicator pill around the icon rendered in secondary mint container tones.

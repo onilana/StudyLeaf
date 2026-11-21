@@ -1,0 +1,108 @@
+package com.example.ui.theme
+
+import androidx.compose.ui.graphics.Color
+
+// StudyLeaf Material 3 Core Palette
+val PrimaryLight = Color(0xFF012D1D)
+val OnPrimaryLight = Color(0xFFFFFFFF)
+val PrimaryContainerLight = Color(0xFF1B4332)
+val OnPrimaryContainerLight = Color(0xFF86AF99)
+val InversePrimaryLight = Color(0xFFA5D0B9)
+
+val SecondaryLight = Color(0xFF006C48)
+val OnSecondaryLight = Color(0xFFFFFFFF)
+val SecondaryContainerLight = Color(0xFF92F7C3)
+val OnSecondaryContainerLight = Color(0xFF00734D)
+
+val TertiaryLight = Color(0xFF002C28)
+val OnTertiaryLight = Color(0xFFFFFFFF)
+val TertiaryContainerLight = Color(0xFF00443E)
+val OnTertiaryContainerLight = Color(0xFF18BAAC)
+
+val ErrorLight = Color(0xFFBA1A1A)
+val OnErrorLight = Color(0xFFFFFFFF)
+val ErrorContainerLight = Color(0xFFFFDAD6)
+val OnErrorContainerLight = Color(0xFF93000A)
+
+val BackgroundLight = Color(0xFFF8F9FA)
+val OnBackgroundLight = Color(0xFF1A1C1E)
+val SurfaceLight = Color(0xFFF9F9FC)
+val SurfaceDimLight = Color(0xFFDADADC)
+val SurfaceBrightLight = Color(0xFFF9F9FC)
+val SurfaceContainerLowestLight = Color(0xFFFFFFFF)
+val SurfaceContainerLowLight = Color(0xFFF3F3F6)
+val SurfaceContainerLight = Color(0xFFF1F5F2)
+val SurfaceContainerHighLight = Color(0xFFE7ECE8)
+val SurfaceContainerHighestLight = Color(0xFFE2E2E5)
+val OnSurfaceLight = Color(0xFF1A1C1E)
+val OnSurfaceVariantLight = Color(0xFF414844)
+val InverseSurfaceLight = Color(0xFF2F3133)
+val InverseOnSurfaceLight = Color(0xFFF0F0F3)
+val OutlineLight = Color(0xFF717973)
+val OutlineVariantLight = Color(0xFFC1C8C2)
+val SurfaceTintLight = Color(0xFF3F6653)
+
+// Fixed Tonal Accents
+val PrimaryFixed = Color(0xFFC1ECD4)
+val PrimaryFixedDim = Color(0xFFA5D0B9)
+val OnPrimaryFixed = Color(0xFF002114)
+val OnPrimaryFixedVariant = Color(0xFF274E3D)
+val SecondaryFixed = Color(0xFF92F7C3)
+val SecondaryFixedDim = Color(0xFF75DAA8)
+val OnSecondaryFixed = Color(0xFF002113)
+val OnSecondaryFixedVariant = Color(0xFF005235)
+val TertiaryFixed = Color(0xFF70F8E8)
+val TertiaryFixedDim = Color(0xFF4FDBCC)
+val OnTertiaryFixed = Color(0xFF00201D)
+val OnTertiaryFixedVariant = Color(0xFF005049)
+
+// Dark Theme Biophilic Tokens
+val PrimaryDark = Color(0xFFA5D0B9)
+val OnPrimaryDark = Color(0xFF002114)
+val PrimaryContainerDark = Color(0xFF1B4332)
+val OnPrimaryContainerDark = Color(0xFFC1ECD4)
+val InversePrimaryDark = Color(0xFF012D1D)
+
+val SecondaryDark = Color(0xFF75DAA8)
+val OnSecondaryDark = Color(0xFF002113)
+val SecondaryContainerDark = Color(0xFF005235)
+val OnSecondaryContainerDark = Color(0xFF92F7C3)
+
+val TertiaryDark = Color(0xFF4FDBCC)
+val OnTertiaryDark = Color(0xFF00201D)
+val TertiaryContainerDark = Color(0xFF00443E)
+val OnTertiaryContainerDark = Color(0xFF70F8E8)
+
+val ErrorDark = Color(0xFFFFB4AB)
+val OnErrorDark = Color(0xFF690005)
+val ErrorContainerDark = Color(0xFF93000A)
+val OnErrorContainerDark = Color(0xFFFFDAD6)
+
+val SurfaceDark = Color(0xFF121413)
+val BackgroundDark = Color(0xFF121413)
+val SurfaceDimDark = Color(0xFF0D0F0E)
+val SurfaceBrightDark = Color(0xFF292E2B)
+val SurfaceContainerLowestDark = Color(0xFF0B0D0C)
+val SurfaceContainerLowDark = Color(0xFF161918)
+val SurfaceContainerDark = Color(0xFF1A1E1C)
+val SurfaceContainerHighDark = Color(0xFF222724)
+val SurfaceContainerHighestDark = Color(0xFF2B312E)
+val OnSurfaceDark = Color(0xFFE3E7E4)
+val OnSurfaceVariantDark = Color(0xFFB8C2BC)
+val InverseSurfaceDark = Color(0xFFE3E7E4)
+val InverseOnSurfaceDark = Color(0xFF1A1C1E)
+val OutlineDark = Color(0xFF8B938D)
+val OutlineVariantDark = Color(0xFF39423D)
+
+// Semantic Document Channels (Non-brand format channels)
+val DocPdfColor = Color(0xFFD9383A)
+val DocWordColor = Color(0xFF2B579A)
+val DocExcelColor = Color(0xFF1D6F42)
+val DocImageColor = Color(0xFFE58E26)
+val DocScannerColor = Color(0xFF0E8388)
+
+// Annotation Palette
+val AnnotationYellow = Color(0xFFFFD166)
+val AnnotationGreen = Color(0xFF74C69D)
+val AnnotationBlue = Color(0xFF4EA8DE)
+val AnnotationPink = Color(0xFFF28482)

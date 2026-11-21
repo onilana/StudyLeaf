@@ -1,0 +1,48 @@
+package com.example.data.local
+
+import android.content.Context
+import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.preferencesDataStore
+import com.example.data.model.FileViewMode
+import com.example.data.model.SortOrder
+import com.example.data.model.ThemePreference
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+
+private val Context.studyLeafDataStore by preferencesDataStore(name = "studyleaf_preferences")
+
+class PreferencesRepository(private val context: Context) {
+    private object Keys {
+        val THEME = stringPreferencesKey("theme_preference")
+        val FILE_VIEW_MODE = stringPreferencesKey("file_view_mode")
+        val SORT_ORDER = stringPreferencesKey("sort_order")
+    }
+
+    val themePreference: Flow<ThemePreference> = context.studyLeafDataStore.data.map { prefs ->
+        runCatching { ThemePreference.valueOf(prefs[Keys.THEME] ?: ThemePreference.LIGHT.name) }
+            .getOrDefault(ThemePreference.LIGHT)
+    }
+
+    val fileViewMode: Flow<FileViewMode> = context.studyLeafDataStore.data.map { prefs ->
+        runCatching { FileViewMode.valueOf(prefs[Keys.FILE_VIEW_MODE] ?: FileViewMode.LIST.name) }
+            .getOrDefault(FileViewMode.LIST)
+    }
+
+    val sortOrder: Flow<SortOrder> = context.studyLeafDataStore.data.map { prefs ->
+        runCatching { SortOrder.valueOf(prefs[Keys.SORT_ORDER] ?: SortOrder.RECENT.name) }
+            .getOrDefault(SortOrder.RECENT)
+    }
+
+    suspend fun setThemePreference(preference: ThemePreference) {
+        context.studyLeafDataStore.edit { it[Keys.THEME] = preference.name }
+    }
+
+    suspend fun setFileViewMode(mode: FileViewMode) {
+        context.studyLeafDataStore.edit { it[Keys.FILE_VIEW_MODE] = mode.name }
+    }
+
+    suspend fun setSortOrder(order: SortOrder) {
+        context.studyLeafDataStore.edit { it[Keys.SORT_ORDER] = order.name }
+    }
+}

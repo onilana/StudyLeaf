@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">StudyLeaf</string>
+
+    <!-- Navigation -->
+    <string name="nav_home">Home</string>
+    <string name="nav_tools">Tools</string>
+    <string name="nav_files">Files</string>
+    <string name="nav_history">History</string>
+
+    <!-- Common -->
+    <string name="action_scan">Scan</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_save">Save Document</string>
+    <string name="action_convert_to_pdf">Convert to PDF</string>
+    <string name="action_add_pages">Add Pages</string>
+    <string name="action_select_all">Select All</string>
+    <string name="action_share_copy">Share Copy</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_import">Import</string>
+    <string name="action_open_reader">Open Reader</string>
+    <string name="action_close">Close</string>
+    <string name="search_documents_placeholder">Search documents, scans, notes…</string>
+    <string name="offline_badge">On-Device Offline</string>
+
+    <!-- Home -->
+    <string name="section_quick_actions">Quick Actions</string>
+    <string name="section_recent_documents">Recent Documents</string>
+    <string name="tool_scan_title">Scan Document</string>
+    <string name="tool_scan_desc">Perspective crop &amp; enhance</string>
+    <string name="tool_img_pdf_title">Image to PDF</string>
+    <string name="tool_img_pdf_desc">Combine photos into pages</string>
+    <string name="tool_merge_title">Merge PDFs</string>
+    <string name="tool_merge_desc">Unite multiple documents</string>
+    <string name="tool_word_pdf_title">Word &amp; Text</string>
+    <string name="tool_word_pdf_desc">Typeset notes into PDF</string>
+
+    <!-- Tools -->
+    <string name="tools_title">PDF &amp; Conversion Tools</string>
+    <string name="tools_subtitle">100% local processing. Files never leave your device.</string>
+    <string name="tool_split_title">Split &amp; Reorder</string>
+    <string name="tool_split_desc">Rearrange or extract PDF pages</string>
+    <string name="tool_compress_title">Optimize PDF</string>
+    <string name="tool_compress_desc">Reduce file size locally</string>
+    <string name="tool_pdf_img_title">PDF to PNG</string>
+    <string name="tool_pdf_img_desc">Export crisp page images</string>
+    <string name="tool_excel_title">Excel ⇄ Doc</string>
+    <string name="tool_excel_desc">Word/PDF &amp; XLSX</string>
+    <string name="tool_compress_img_title">Compress Img</string>
+    <string name="tool_compress_img_desc">Shrink photo size</string>
+    <string name="tool_studio_ai_title">PDF Studio</string>
+    <string name="tool_studio_ai_desc">On-Device + AI</string>
+
+    <!-- Files -->
+    <string name="files_title">Local Vault</string>
+    <string name="files_empty_title">No matching documents</string>
+    <string name="files_empty_subtitle">Import files from your device or scan a physical page to get started.</string>
+
+    <!-- History -->
+    <string name="history_title">Activity &amp; Conversions</string>
+    <string name="history_empty_title">No conversion history yet</string>
+    <string name="history_empty_subtitle">Scans, merges, and format conversions processed on-device will appear here.</string>
+
+    <!-- Reader -->
+    <string name="reader_annotations_title">Annotations</string>
+    <string name="reader_tool_pan">Pan</string>
+    <string name="reader_tool_highlight">Highlight</string>
+    <string name="reader_tool_underline">Underline</string>
+    <string name="reader_tool_strike">Strike</string>
+    <string name="reader_tool_pen">Pen</string>
+    <string name="reader_tool_note">Note</string>
+    <string name="reader_add_note_title">Add Sticky Note</string>
+    <string name="reader_note_hint">Write a study note for this page…</string>
+
+    <!-- Scanner -->
+    <string name="scanner_title">Optical Scanner</string>
+    <string name="scanner_capture_camera">Capture Photo</string>
+    <string name="scanner_pick_photo">Import Photo</string>
+    <string name="scanner_apply_crop">Apply Perspective Crop</string>
+    <string name="scanner_save_pdf">Save Scanned PDF</string>
+    <string name="scanner_hint">Drag the four teal corner handles to align document edges.</string>
+
+    <!-- Content Descriptions -->
+    <string name="cd_toggle_theme">Toggle light or dark theme</string>
+    <string name="cd_search">Search</string>
+    <string name="cd_clear_search">Clear search</string>
+    <string name="cd_favorite">Toggle favorite</string>
+    <string name="cd_more_options">More document options</string>
+    <string name="cd_back">Navigate back</string>
+    <string name="cd_undo">Undo last annotation</string>
+    <string name="cd_reorder_pages">Reorder document pages</string>
+    <string name="cd_toggle_thumbnails">Toggle thumbnail rail</string>
+    <string name="cd_share_document">Share document</string>
+    <string name="cd_grid_toggle">Switch between list and grid view</string>
+    <string name="cd_reader_tools_menu">Toggle PDF tools menu</string>
+</resources>

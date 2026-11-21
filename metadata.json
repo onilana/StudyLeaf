@@ -1,0 +1,6 @@
+{
+  "name": "StudyLeaf",
+  "description": "Offline-first PDF reader, document annotator, optical scanner, and on-device file converter built with Material Design 3.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
