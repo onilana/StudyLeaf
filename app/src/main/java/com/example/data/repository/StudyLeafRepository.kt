@@ -14,6 +14,8 @@ import com.example.data.model.ConversionToolType
 import com.example.data.model.DocumentFormat
 import com.example.data.model.NormalizedPoint
 import com.example.data.model.PageAnnotation
+import com.example.data.model.ScanEnhancementSettings
+import com.example.data.model.ScanResolutionOption
 import com.example.data.model.ScannerFilterMode
 import com.example.data.model.decodePoints
 import com.example.data.model.encodePoints
@@ -186,12 +188,14 @@ class StudyLeafRepository(
         bitmaps: List<Bitmap>,
         outputTitle: String,
         marginPt: Int,
-        isScan: Boolean
+        isScan: Boolean,
+        scanResolution: ScanResolutionOption? = null
     ): DocumentEntity {
         val start = System.currentTimeMillis()
         val info = engine.imagesToPdf(bitmaps, outputTitle, marginPt)
         val duration = (System.currentTimeMillis() - start).coerceAtLeast(80L)
         val now = System.currentTimeMillis()
+        val resLabel = scanResolution?.let { " • ${it.label} (${it.widthPx}×${it.heightPx})" }.orEmpty()
         val doc = DocumentEntity(
             title = outputTitle,
             filePath = info.file.absolutePath,
@@ -200,7 +204,7 @@ class StudyLeafRepository(
             pageCount = info.pageCount,
             folderName = if (isScan) "Scans" else "Converted",
             summarySnippet = if (isScan) {
-                "Optically scanned and perspective-corrected (${info.pageCount} pages)."
+                "Optically scanned & enhanced (${info.pageCount} pg)$resLabel."
             } else {
                 "Compiled from ${info.pageCount} local image(s) into PDF."
             },
@@ -211,7 +215,7 @@ class StudyLeafRepository(
         historyDao.insert(
             ConversionHistoryEntity(
                 toolTypeName = if (isScan) ConversionToolType.SCAN_DOCUMENT.name else ConversionToolType.IMAGE_TO_PDF.name,
-                sourceTitle = "${bitmaps.size} ${if (isScan) "scanned page(s)" else "image(s)"}",
+                sourceTitle = "${bitmaps.size} ${if (isScan) "scanned page(s)$resLabel" else "image(s)"}",
                 resultTitle = outputTitle,
                 resultDocumentId = id,
                 sourceFormatName = if (isScan) DocumentFormat.SCAN.name else DocumentFormat.IMAGE.name,
@@ -574,6 +578,7 @@ class StudyLeafRepository(
     suspend fun warpScanPreview(
         source: Bitmap,
         corners: List<NormalizedPoint>,
-        filterMode: ScannerFilterMode
-    ): Bitmap = engine.perspectiveWarpAndEnhance(source, corners, filterMode)
+        filterMode: ScannerFilterMode,
+        enhancement: ScanEnhancementSettings = ScanEnhancementSettings()
+    ): Bitmap = engine.perspectiveWarpAndEnhance(source, corners, filterMode, enhancement)
 }

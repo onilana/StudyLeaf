@@ -70,7 +70,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.R
+import com.studyleaf.R
 import com.example.data.local.DocumentEntity
 import com.example.data.model.ConversionToolType
 import com.example.ui.components.StudyLeafWindowSize

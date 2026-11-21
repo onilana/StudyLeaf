@@ -18,6 +18,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import com.example.data.model.DocumentFormat
 import com.example.data.model.NormalizedPoint
+import com.example.data.model.ScanEnhancementSettings
 import com.example.data.model.ScannerFilterMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -566,7 +567,8 @@ class DocumentEngine(private val context: Context) {
     suspend fun perspectiveWarpAndEnhance(
         source: Bitmap,
         corners: List<NormalizedPoint>,
-        filterMode: ScannerFilterMode
+        filterMode: ScannerFilterMode,
+        enhancement: ScanEnhancementSettings = ScanEnhancementSettings()
     ): Bitmap = withContext(Dispatchers.Default) {
         val safeCorners = if (corners.size == 4) corners else listOf(
             NormalizedPoint(0.08f, 0.08f),
@@ -574,8 +576,8 @@ class DocumentEngine(private val context: Context) {
             NormalizedPoint(0.92f, 0.92f),
             NormalizedPoint(0.08f, 0.92f)
         )
-        val outW = 1000
-        val outH = 1414
+        val outW = enhancement.resolution.widthPx
+        val outH = enhancement.resolution.heightPx
         val result = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(result)
         canvas.drawColor(Color.WHITE)
@@ -596,23 +598,49 @@ class DocumentEngine(private val context: Context) {
         val matrix = Matrix()
         matrix.setPolyToPoly(srcPts, 0, dstPts, 0, 4)
 
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        val combinedMatrix = ColorMatrix()
         when (filterMode) {
             ScannerFilterMode.ORIGINAL -> Unit
             ScannerFilterMode.BOTANICAL_CRISP -> {
-                val cm = ColorMatrix(
+                combinedMatrix.postConcat(
+                    ColorMatrix(
+                        floatArrayOf(
+                            1.22f, 0f, 0f, 0f, -14f,
+                            0f, 1.24f, 0f, 0f, -12f,
+                            0f, 0f, 1.20f, 0f, -14f,
+                            0f, 0f, 0f, 1f, 0f
+                        )
+                    )
+                )
+            }
+            ScannerFilterMode.MAGIC_COLOR -> {
+                val sat = ColorMatrix().apply { setSaturation(1.38f) }
+                val vivid = ColorMatrix(
                     floatArrayOf(
-                        1.22f, 0f, 0f, 0f, -14f,
-                        0f, 1.24f, 0f, 0f, -12f,
-                        0f, 0f, 1.20f, 0f, -14f,
+                        1.26f, 0f, 0f, 0f, -10f,
+                        0f, 1.26f, 0f, 0f, -10f,
+                        0f, 0f, 1.26f, 0f, -10f,
                         0f, 0f, 0f, 1f, 0f
                     )
                 )
-                paint.colorFilter = ColorMatrixColorFilter(cm)
+                sat.postConcat(vivid)
+                combinedMatrix.postConcat(sat)
+            }
+            ScannerFilterMode.WHITEBOARD -> {
+                val sat = ColorMatrix().apply { setSaturation(1.20f) }
+                val lift = ColorMatrix(
+                    floatArrayOf(
+                        1.42f, 0f, 0f, 0f, -18f,
+                        0f, 1.42f, 0f, 0f, -16f,
+                        0f, 0f, 1.44f, 0f, -14f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+                sat.postConcat(lift)
+                combinedMatrix.postConcat(sat)
             }
             ScannerFilterMode.GRAYSCALE -> {
-                val cm = ColorMatrix().apply { setSaturation(0f) }
-                paint.colorFilter = ColorMatrixColorFilter(cm)
+                combinedMatrix.postConcat(ColorMatrix().apply { setSaturation(0f) })
             }
             ScannerFilterMode.BW_PRINT -> {
                 val sat = ColorMatrix().apply { setSaturation(0f) }
@@ -625,11 +653,105 @@ class DocumentEngine(private val context: Context) {
                     )
                 )
                 sat.postConcat(contrast)
-                paint.colorFilter = ColorMatrixColorFilter(sat)
+                combinedMatrix.postConcat(sat)
+            }
+            ScannerFilterMode.WARM_PAPER -> {
+                val warm = ColorMatrix(
+                    floatArrayOf(
+                        1.08f, 0.04f, 0f, 0f, 6f,
+                        0.02f, 1.03f, 0f, 0f, 2f,
+                        0f, 0f, 0.90f, 0f, -6f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+                combinedMatrix.postConcat(warm)
+            }
+            ScannerFilterMode.HIGH_CONTRAST -> {
+                val sat = ColorMatrix().apply { setSaturation(0f) }
+                val inkBoost = ColorMatrix(
+                    floatArrayOf(
+                        2.65f, 0f, 0f, 0f, -185f,
+                        0f, 2.65f, 0f, 0f, -185f,
+                        0f, 0f, 2.65f, 0f, -185f,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+                sat.postConcat(inkBoost)
+                combinedMatrix.postConcat(sat)
             }
         }
+
+        // Apply user contrast and brightness adjustments
+        val c = enhancement.contrast.coerceIn(0.6f, 1.8f)
+        val b = (enhancement.brightness.coerceIn(-0.4f, 0.4f) * 255f)
+        val offset = (-128f * c + 128f) + b
+        if (kotlin.math.abs(c - 1f) > 0.01f || kotlin.math.abs(b) > 0.5f) {
+            combinedMatrix.postConcat(
+                ColorMatrix(
+                    floatArrayOf(
+                        c, 0f, 0f, 0f, offset,
+                        0f, c, 0f, 0f, offset,
+                        0f, 0f, c, 0f, offset,
+                        0f, 0f, 0f, 1f, 0f
+                    )
+                )
+            )
+        }
+
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            colorFilter = ColorMatrixColorFilter(combinedMatrix)
+        }
         canvas.drawBitmap(source, matrix, paint)
+
+        // Apply on-device Clarity sharpening kernel (3x3 unsharp mask)
+        val clarityAmount = enhancement.clarity.coerceIn(0f, 1f)
+        if (clarityAmount > 0.03f) {
+            applyClaritySharpenInPlace(result, clarityAmount * 0.75f)
+        }
         result
+    }
+
+    private fun applyClaritySharpenInPlace(bitmap: Bitmap, strength: Float) {
+        val w = bitmap.width
+        val h = bitmap.height
+        if (w < 3 || h < 3) return
+        val src = IntArray(w * h)
+        val dst = IntArray(w * h)
+        bitmap.getPixels(src, 0, w, 0, 0, w, h)
+        System.arraycopy(src, 0, dst, 0, src.size)
+
+        val centerWeight = 1f + 4f * strength
+        val neighborWeight = -strength
+
+        for (y in 1 until h - 1) {
+            val rowOffset = y * w
+            val upOffset = (y - 1) * w
+            val downOffset = (y + 1) * w
+            for (x in 1 until w - 1) {
+                val idx = rowOffset + x
+                val cPx = src[idx]
+                val uPx = src[upOffset + x]
+                val dPx = src[downOffset + x]
+                val lPx = src[idx - 1]
+                val rPx = src[idx + 1]
+
+                val r = (((cPx shr 16) and 0xFF) * centerWeight +
+                    (((uPx shr 16) and 0xFF) + ((dPx shr 16) and 0xFF) +
+                        ((lPx shr 16) and 0xFF) + ((rPx shr 16) and 0xFF)) * neighborWeight)
+                    .toInt().coerceIn(0, 255)
+                val g = (((cPx shr 8) and 0xFF) * centerWeight +
+                    (((uPx shr 8) and 0xFF) + ((dPx shr 8) and 0xFF) +
+                        ((lPx shr 8) and 0xFF) + ((rPx shr 8) and 0xFF)) * neighborWeight)
+                    .toInt().coerceIn(0, 255)
+                val b = ((cPx and 0xFF) * centerWeight +
+                    ((uPx and 0xFF) + (dPx and 0xFF) +
+                        (lPx and 0xFF) + (rPx and 0xFF)) * neighborWeight)
+                    .toInt().coerceIn(0, 255)
+
+                dst[idx] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            }
+        }
+        bitmap.setPixels(dst, 0, w, 0, 0, w, h)
     }
 
     suspend fun decodeBitmapFromUri(uri: Uri, maxDim: Int = 1400): Bitmap? =

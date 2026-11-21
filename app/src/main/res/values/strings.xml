@@ -93,4 +93,18 @@
     <string name="cd_share_document">Share document</string>
     <string name="cd_grid_toggle">Switch between list and grid view</string>
     <string name="cd_reader_tools_menu">Toggle PDF tools menu</string>
+    <string name="cd_about_app">About StudyLeaf</string>
+
+    <!-- About & Updates -->
+    <string name="about_title">About StudyLeaf</string>
+    <string name="about_tagline">On-device PDF studio, optical scanner, converter &amp; study companion.</string>
+    <string name="about_author_label">Author</string>
+    <string name="about_publisher_label">Publisher</string>
+    <string name="about_author_name">Oni Lana</string>
+    <string name="about_version_label">Version</string>
+    <string name="about_package_label">Application ID</string>
+    <string name="about_check_updates">Check for Updates</string>
+    <string name="about_checking_updates">Checking for updates…</string>
+    <string name="about_up_to_date">StudyLeaf v%1$s is up to date</string>
+    <string name="about_store_opened">Opened Play Store update page</string>
 </resources>

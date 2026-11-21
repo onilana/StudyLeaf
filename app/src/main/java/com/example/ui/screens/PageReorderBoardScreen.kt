@@ -55,7 +55,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.R
+import com.studyleaf.R
 import com.example.data.engine.DocumentEngine
 import com.example.data.local.DocumentEntity
 import com.example.ui.components.StudyLeafWindowSize

@@ -9,11 +9,11 @@ plugins {
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.studyleaf"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.studyleaf.krmxvp"
+    applicationId = "com.studyleaf.org"
     minSdk = 24
     targetSdk = 36
     versionCode = 1

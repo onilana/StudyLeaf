@@ -12,7 +12,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
@@ -25,7 +24,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -39,10 +37,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CropFree
+import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,8 +55,10 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -86,23 +89,33 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
-import com.example.R
+import com.studyleaf.R
 import com.example.data.engine.DocumentEngine
 import com.example.data.engine.PdfSeedGenerator
 import com.example.data.model.NormalizedPoint
+import com.example.data.model.ScanEnhancementSettings
+import com.example.data.model.ScanResolutionOption
 import com.example.data.model.ScannerFilterMode
 import com.example.ui.theme.DocScannerColor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.hypot
+import kotlin.math.roundToInt
+
+private enum class ScannerControlPanel {
+    FILTERS,
+    ENHANCE,
+    RESOLUTION
+}
 
 @Composable
 fun DocumentScannerScreen(
     engine: DocumentEngine,
-    onWarpPreview: suspend (Bitmap, List<NormalizedPoint>, ScannerFilterMode) -> Bitmap,
-    onSaveScannedPdf: (List<Bitmap>, String) -> Unit,
+    onWarpPreview: suspend (Bitmap, List<NormalizedPoint>, ScannerFilterMode, ScanEnhancementSettings) -> Bitmap,
+    onSaveScannedPdf: (List<Bitmap>, String, ScanResolutionOption) -> Unit,
     onShowMessage: (String) -> Unit,
     onBack: () -> Unit
 ) {
@@ -116,9 +129,10 @@ fun DocumentScannerScreen(
     var isRectifying by remember { mutableStateOf(false) }
     var showingPreview by remember { mutableStateOf(false) }
     var filterMode by remember { mutableStateOf(ScannerFilterMode.BOTANICAL_CRISP) }
+    var enhancement by remember { mutableStateOf(ScanEnhancementSettings()) }
+    var activeControlPanel by remember { mutableStateOf(ScannerControlPanel.FILTERS) }
     var outputTitle by remember { mutableStateOf("Scanned Lecture Notes") }
 
-    // Four interactive corner handles in normalized [0..1] coordinates matching the skewed sheet
     val corners = remember {
         mutableStateListOf(
             NormalizedPoint(0.14f, 0.14f),
@@ -130,7 +144,6 @@ fun DocumentScannerScreen(
     var draggingHandleIndex by remember { mutableIntStateOf(-1) }
     val batchPages = remember { mutableStateListOf<Bitmap>() }
 
-    // Load default skewed desk sheet immediately so users can test perspective alignment right away
     LaunchedEffect(Unit) {
         if (sourceBitmap == null) {
             sourceBitmap = withContext(Dispatchers.Default) {
@@ -139,17 +152,17 @@ fun DocumentScannerScreen(
         }
     }
 
-    // Recompute warped preview whenever filter changes in preview mode
-    LaunchedEffect(showingPreview, filterMode, sourceBitmap) {
+    // Recompute warped & enhanced preview whenever filter, clarity, brightness, contrast, or resolution changes
+    LaunchedEffect(showingPreview, filterMode, enhancement, sourceBitmap) {
         val src = sourceBitmap ?: return@LaunchedEffect
         if (showingPreview) {
+            delay(50)
             isRectifying = true
-            rectifiedBitmap = onWarpPreview(src, corners.toList(), filterMode)
+            rectifiedBitmap = onWarpPreview(src, corners.toList(), filterMode, enhancement)
             isRectifying = false
         }
     }
 
-    // Real Camera capture via FileProvider + TakePicture
     var pendingCaptureFile by remember { mutableStateOf<File?>(null) }
     val takePictureLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
@@ -187,13 +200,12 @@ fun DocumentScannerScreen(
         }
     }
 
-    // Zero-permission Android Photo Picker
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
             scope.launch {
-                val decoded = engine.decodeBitmapFromUri(uri, maxDim = 1400)
+                val decoded = engine.decodeBitmapFromUri(uri, maxDim = 2000)
                 if (decoded != null) {
                     sourceBitmap = decoded
                     showingPreview = false
@@ -217,7 +229,7 @@ fun DocumentScannerScreen(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -241,7 +253,11 @@ fun DocumentScannerScreen(
                         color = Color.White
                     )
                     Text(
-                        text = if (showingPreview) "Optical filter & batch review" else "Perspective corner alignment",
+                        text = if (showingPreview) {
+                            "${filterMode.label} • ${enhancement.resolution.label} (${enhancement.resolution.widthPx}×${enhancement.resolution.heightPx})"
+                        } else {
+                            "Perspective corner alignment"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFFA5D0B9)
                     )
@@ -292,7 +308,7 @@ fun DocumentScannerScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .padding(horizontal = 16.dp, vertical = 6.dp),
             contentAlignment = Alignment.Center
         ) {
             val src = sourceBitmap
@@ -347,7 +363,6 @@ fun DocumentScannerScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // StudyLeaf Spec: Semi-transparent dark scrim rgba(0,0,0,0.55) + Scanner Teal (#0E8388) polygon + 24dp circular handles
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val w = size.width
                         val h = size.height
@@ -377,7 +392,6 @@ fun DocumentScannerScreen(
                             style = Stroke(width = 3.dp.toPx())
                         )
 
-                        // Rule-of-thirds alignment grid inside quad
                         for (t in listOf(0.33f, 0.66f)) {
                             val top = Offset(pts[0].x + (pts[1].x - pts[0].x) * t, pts[0].y + (pts[1].y - pts[0].y) * t)
                             val bot = Offset(pts[3].x + (pts[2].x - pts[3].x) * t, pts[3].y + (pts[2].y - pts[3].y) * t)
@@ -388,7 +402,6 @@ fun DocumentScannerScreen(
                             drawLine(DocScannerColor.copy(alpha = 0.4f), left, right, strokeWidth = 1.dp.toPx())
                         }
 
-                        // 24dp circular drag targets with high-contrast inner rings
                         val outerRadius = 12.dp.toPx()
                         val innerRadius = 6.dp.toPx()
                         pts.forEachIndexed { idx, center ->
@@ -408,41 +421,55 @@ fun DocumentScannerScreen(
                     }
                 }
             } else {
-                // Rectified Enhanced Preview
-                if (isRectifying || rectifiedBitmap == null) {
-                    CircularProgressIndicator(color = DocScannerColor)
-                } else {
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = Color.White,
-                        shadowElevation = 6.dp,
-                        modifier = Modifier.aspectRatio(0.71f)
-                    ) {
-                        Image(
-                            bitmap = rectifiedBitmap!!.asImageBitmap(),
-                            contentDescription = "Perspective-corrected scan preview",
-                            contentScale = ContentScale.Fit,
-                            modifier = Modifier.fillMaxSize()
-                        )
+                // Rectified & Enhanced Preview
+                Box(contentAlignment = Alignment.Center) {
+                    if (rectifiedBitmap != null) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = Color.White,
+                            shadowElevation = 6.dp,
+                            modifier = Modifier.aspectRatio(0.71f)
+                        ) {
+                            Image(
+                                bitmap = rectifiedBitmap!!.asImageBitmap(),
+                                contentDescription = "Perspective-corrected scan preview",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                    }
+                    if (isRectifying || rectifiedBitmap == null) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.Black.copy(alpha = 0.55f)
+                        ) {
+                            CircularProgressIndicator(
+                                color = Color(0xFF92F7C3),
+                                strokeWidth = 3.dp,
+                                modifier = Modifier
+                                    .padding(12.dp)
+                                    .size(28.dp)
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // Floating Scanner Controls Sheet (Level 3 elevation)
+        // Floating Scanner Controls Sheet
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            shape = RoundedCornerShape(24.dp),
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            shape = RoundedCornerShape(22.dp),
             color = MaterialTheme.colorScheme.surfaceContainer,
             tonalElevation = 6.dp
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (!showingPreview) {
                     Row(
@@ -500,25 +527,183 @@ fun DocumentScannerScreen(
                         }
                     }
                 } else {
-                    // Optical Enhancement Filter Chips
+                    // Compact Panel Mode Switcher: Filters | Clarity & Enhance | Resolution
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        ScannerFilterMode.entries.forEach { mode ->
-                            FilterChip(
-                                selected = filterMode == mode,
-                                onClick = { filterMode = mode },
-                                shape = CircleShape,
-                                label = { Text(mode.label, style = MaterialTheme.typography.labelMedium) },
-                                colors = FilterChipDefaults.filterChipColors(
-                                    selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                ),
-                                modifier = Modifier.testTag("scanner_filter_${mode.name.lowercase()}")
-                            )
+                        ScannerModePill(
+                            label = "Filters (${ScannerFilterMode.entries.size})",
+                            icon = Icons.Filled.AutoFixHigh,
+                            selected = activeControlPanel == ScannerControlPanel.FILTERS,
+                            onClick = { activeControlPanel = ScannerControlPanel.FILTERS },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("scanner_tab_filters")
+                        )
+                        ScannerModePill(
+                            label = "Clarity ${(enhancement.clarity * 100).roundToInt()}%",
+                            icon = Icons.Filled.Tune,
+                            selected = activeControlPanel == ScannerControlPanel.ENHANCE,
+                            onClick = { activeControlPanel = ScannerControlPanel.ENHANCE },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("scanner_tab_enhance")
+                        )
+                        ScannerModePill(
+                            label = enhancement.resolution.label,
+                            icon = Icons.Filled.HighQuality,
+                            selected = activeControlPanel == ScannerControlPanel.RESOLUTION,
+                            onClick = { activeControlPanel = ScannerControlPanel.RESOLUTION },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("scanner_tab_resolution")
+                        )
+                    }
+
+                    when (activeControlPanel) {
+                        ScannerControlPanel.FILTERS -> {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                ScannerFilterMode.entries.forEach { mode ->
+                                    FilterChip(
+                                        selected = filterMode == mode,
+                                        onClick = { filterMode = mode },
+                                        shape = CircleShape,
+                                        label = { Text(mode.label, style = MaterialTheme.typography.labelMedium) },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                            selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                        ),
+                                        modifier = Modifier.testTag("scanner_filter_${mode.name.lowercase()}")
+                                    )
+                                }
+                            }
+                        }
+
+                        ScannerControlPanel.ENHANCE -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Optical Enhancement",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            enhancement = enhancement.copy(
+                                                clarity = 0.30f,
+                                                brightness = 0f,
+                                                contrast = 1.0f
+                                            )
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                        modifier = Modifier.testTag("scanner_reset_enhance")
+                                    ) {
+                                        Text("Reset", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                }
+                                CompactSliderRow(
+                                    label = "Clarity",
+                                    valueLabel = "${(enhancement.clarity * 100).roundToInt()}%",
+                                    value = enhancement.clarity,
+                                    range = 0f..1f,
+                                    onValueChange = { enhancement = enhancement.copy(clarity = it) },
+                                    tag = "scanner_clarity_slider"
+                                )
+                                CompactSliderRow(
+                                    label = "Brightness",
+                                    valueLabel = "${if (enhancement.brightness >= 0f) "+" else ""}${(enhancement.brightness * 100).roundToInt()}%",
+                                    value = enhancement.brightness,
+                                    range = -0.35f..0.35f,
+                                    onValueChange = { enhancement = enhancement.copy(brightness = it) },
+                                    tag = "scanner_brightness_slider"
+                                )
+                                CompactSliderRow(
+                                    label = "Contrast",
+                                    valueLabel = "${(enhancement.contrast * 100).roundToInt()}%",
+                                    value = enhancement.contrast,
+                                    range = 0.75f..1.55f,
+                                    onValueChange = { enhancement = enhancement.copy(contrast = it) },
+                                    tag = "scanner_contrast_slider"
+                                )
+                            }
+                        }
+
+                        ScannerControlPanel.RESOLUTION -> {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "Scan Page Resolution",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    ScanResolutionOption.entries.forEach { option ->
+                                        val chosen = enhancement.resolution == option
+                                        Surface(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .clickable { enhancement = enhancement.copy(resolution = option) }
+                                                .testTag("scanner_res_${option.name.lowercase()}"),
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = if (chosen) {
+                                                MaterialTheme.colorScheme.secondaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.surfaceContainerHigh
+                                            },
+                                            border = BorderStroke(
+                                                width = if (chosen) 1.5.dp else 1.dp,
+                                                color = if (chosen) {
+                                                    MaterialTheme.colorScheme.secondary
+                                                } else {
+                                                    MaterialTheme.colorScheme.outlineVariant
+                                                }
+                                            )
+                                        ) {
+                                            Column(
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 8.dp),
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                                            ) {
+                                                Text(
+                                                    text = option.label,
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (chosen) {
+                                                        MaterialTheme.colorScheme.onSecondaryContainer
+                                                    } else {
+                                                        MaterialTheme.colorScheme.onSurface
+                                                    }
+                                                )
+                                                Text(
+                                                    text = option.badge,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = if (chosen) {
+                                                        MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f)
+                                                    } else {
+                                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                                    },
+                                                    maxLines = 1
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -535,34 +720,35 @@ fun DocumentScannerScreen(
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedButton(
                             onClick = { showingPreview = false },
                             modifier = Modifier
-                                .heightIn(min = 48.dp)
+                                .heightIn(min = 46.dp)
                                 .testTag("scanner_recrop_button"),
-                            shape = RoundedCornerShape(16.dp)
+                            shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp)
                         ) {
-                            Text("Adjust Crop")
+                            Text("Crop", style = MaterialTheme.typography.labelMedium)
                         }
                         FilledTonalButton(
                             onClick = {
                                 rectifiedBitmap?.let {
                                     batchPages.add(it)
                                     showingPreview = false
-                                    onShowMessage("Added page ${batchPages.size} to scan batch")
+                                    onShowMessage("Added page ${batchPages.size} (${enhancement.resolution.label})")
                                 }
                             },
                             modifier = Modifier
-                                .heightIn(min = 48.dp)
+                                .heightIn(min = 46.dp)
                                 .testTag("scanner_add_page_button"),
-                            shape = RoundedCornerShape(16.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp)
+                            shape = RoundedCornerShape(14.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp)
                         ) {
-                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("+ Page (${batchPages.size})")
+                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("+ Page (${batchPages.size})", style = MaterialTheme.typography.labelMedium)
                         }
                         Button(
                             onClick = {
@@ -571,24 +757,107 @@ fun DocumentScannerScreen(
                                     rectifiedBitmap?.let { add(it) }
                                 }
                                 if (pagesToSave.isNotEmpty()) {
-                                    onSaveScannedPdf(pagesToSave, outputTitle)
+                                    onSaveScannedPdf(pagesToSave, outputTitle, enhancement.resolution)
                                 }
                             },
                             modifier = Modifier
                                 .weight(1f)
-                                .heightIn(min = 48.dp)
+                                .heightIn(min = 46.dp)
                                 .testTag("scanner_save_pdf_button"),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(14.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary,
                                 contentColor = MaterialTheme.colorScheme.onPrimary
                             )
                         ) {
-                            Text("Save PDF")
+                            Text("Save PDF", style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ScannerModePill(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = CircleShape,
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHigh
+        },
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.4f) else Color.Transparent
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(14.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactSliderRow(
+    label: String,
+    valueLabel: String,
+    value: Float,
+    range: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    tag: String
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(62.dp)
+        )
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = range,
+            modifier = Modifier
+                .weight(1f)
+                .testTag(tag)
+        )
+        Text(
+            text = valueLabel,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.width(40.dp)
+        )
     }
 }

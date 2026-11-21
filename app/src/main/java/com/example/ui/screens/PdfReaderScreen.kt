@@ -103,7 +103,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import com.example.R
+import com.studyleaf.R
 import com.example.data.engine.DocumentEngine
 import com.example.data.local.DocumentEntity
 import com.example.data.model.AnnotationColorOption

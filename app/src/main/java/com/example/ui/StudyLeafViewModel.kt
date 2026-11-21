@@ -22,6 +22,8 @@ import com.example.data.model.DocumentFormat
 import com.example.data.model.FileViewMode
 import com.example.data.model.NormalizedPoint
 import com.example.data.model.PageAnnotation
+import com.example.data.model.ScanEnhancementSettings
+import com.example.data.model.ScanResolutionOption
 import com.example.data.model.ScannerFilterMode
 import com.example.data.model.SortOrder
 import com.example.data.model.ThemePreference
@@ -551,23 +553,28 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun saveScannedPdf(bitmaps: List<Bitmap>, title: String) {
+    fun saveScannedPdf(
+        bitmaps: List<Bitmap>,
+        title: String,
+        resolution: ScanResolutionOption = ScanResolutionOption.MEDIUM
+    ) {
         if (bitmaps.isEmpty()) return
         viewModelScope.launch {
-            _uiState.update { it.copy(isProcessing = true, processingLabel = "Compiling scanned PDF…") }
+            _uiState.update { it.copy(isProcessing = true, processingLabel = "Compiling ${resolution.label} scan PDF…") }
             val doc = repository.convertImagesToPdf(
                 bitmaps = bitmaps,
                 outputTitle = title.ifBlank { "Scanned Study Notes" },
                 marginPt = 18,
-                isScan = true
+                isScan = true,
+                scanResolution = resolution
             )
             _uiState.update {
                 it.copy(
                     isProcessing = false,
                     processingLabel = "",
                     selectedPreviewDocId = doc.id,
-                    overlay = StudyLeafOverlay.Reader(doc.id),
-                    snackbarMessage = "Saved \"${doc.title}\" (${doc.pageCount} page${if (doc.pageCount == 1) "" else "s"})"
+                    overlay = StudyLeafOverlay.Reader(doc.id, doc),
+                    snackbarMessage = "Saved \"${doc.title}\" (${resolution.label} • ${doc.pageCount} pg)"
                 )
             }
         }
@@ -781,8 +788,12 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    suspend fun warpScan(source: Bitmap, corners: List<NormalizedPoint>, filterMode: ScannerFilterMode): Bitmap =
-        repository.warpScanPreview(source, corners, filterMode)
+    suspend fun warpScan(
+        source: Bitmap,
+        corners: List<NormalizedPoint>,
+        filterMode: ScannerFilterMode,
+        enhancement: ScanEnhancementSettings = ScanEnhancementSettings()
+    ): Bitmap = repository.warpScanPreview(source, corners, filterMode, enhancement)
 
     fun buildShareIntent(doc: DocumentEntity): Intent? {
         val file = File(doc.filePath)

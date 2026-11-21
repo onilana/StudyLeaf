@@ -69,7 +69,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.example.R
+import com.studyleaf.R
 import com.example.ai.AiChatMessage
 import com.example.ai.StructuredStudyDeck
 import com.example.ai.StudyFlashcard

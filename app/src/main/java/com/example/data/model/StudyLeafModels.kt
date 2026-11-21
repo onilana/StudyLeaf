@@ -46,9 +46,31 @@ enum class AnnotationColorOption(val label: String, val hex: Long, val color: Co
 enum class ScannerFilterMode(val label: String) {
     ORIGINAL("Original"),
     BOTANICAL_CRISP("Crisp Doc"),
+    MAGIC_COLOR("Magic Color"),
+    WHITEBOARD("Whiteboard"),
     GRAYSCALE("Grayscale"),
-    BW_PRINT("B&W Print")
+    BW_PRINT("B&W Print"),
+    WARM_PAPER("Warm Study"),
+    HIGH_CONTRAST("Ink Boost")
 }
+
+enum class ScanResolutionOption(
+    val label: String,
+    val badge: String,
+    val widthPx: Int,
+    val heightPx: Int
+) {
+    SMALL("Small", "720p • Compact", 720, 1018),
+    MEDIUM("Medium", "1080p • Balanced", 1080, 1527),
+    LARGE("Large", "1600p • Crisp HD", 1600, 2262)
+}
+
+data class ScanEnhancementSettings(
+    val clarity: Float = 0.30f,
+    val brightness: Float = 0f,
+    val contrast: Float = 1.0f,
+    val resolution: ScanResolutionOption = ScanResolutionOption.MEDIUM
+)
 
 enum class ConversionToolType(
     val title: String,
