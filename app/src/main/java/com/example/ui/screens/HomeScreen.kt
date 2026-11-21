@@ -102,6 +102,7 @@ fun HomeScreen(
     onViewAllFiles: () -> Unit,
     onDocumentClick: (DocumentEntity) -> Unit,
     onOpenReader: (Long) -> Unit,
+    onEditDocument: (Long) -> Unit,
     onToggleFavorite: (Long) -> Unit,
     onReorderPages: (Long) -> Unit,
     onAskAi: (Long?) -> Unit,
@@ -161,6 +162,7 @@ fun HomeScreen(
                 onViewAllFiles = onViewAllFiles,
                 onDocumentClick = onDocumentClick,
                 onOpenReader = onOpenReader,
+                onEditDocument = onEditDocument,
                 onToggleFavorite = onToggleFavorite,
                 onReorderPages = onReorderPages,
                 onAskAi = onAskAi,
@@ -206,6 +208,7 @@ fun HomeScreen(
             onViewAllFiles = onViewAllFiles,
             onDocumentClick = onDocumentClick,
             onOpenReader = onOpenReader,
+            onEditDocument = onEditDocument,
             onToggleFavorite = onToggleFavorite,
             onReorderPages = onReorderPages,
             onAskAi = onAskAi,
@@ -237,6 +240,7 @@ private fun HomeMainColumn(
     onViewAllFiles: () -> Unit,
     onDocumentClick: (DocumentEntity) -> Unit,
     onOpenReader: (Long) -> Unit,
+    onEditDocument: (Long) -> Unit,
     onToggleFavorite: (Long) -> Unit,
     onReorderPages: (Long) -> Unit,
     onAskAi: (Long?) -> Unit,
@@ -569,7 +573,8 @@ private fun HomeMainColumn(
                     onReorderPages = { onReorderPages(doc.id) },
                     onRename = { onRenameRequest(doc) },
                     onShare = { onShare(doc) },
-                    onDelete = { onDeleteRequest(doc) }
+                    onDelete = { onDeleteRequest(doc) },
+                    onEditDocument = { onEditDocument(doc.id) }
                 )
             }
         }

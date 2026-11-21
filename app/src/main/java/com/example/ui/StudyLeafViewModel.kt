@@ -88,9 +88,21 @@ data class AiAssistantUiState(
     val chatError: String? = null
 )
 
+data class DocumentEditorUiState(
+    val isLoading: Boolean = false,
+    val isAiExtracting: Boolean = false,
+    val extractedText: String = "",
+    val extractionVersion: Int = 0,
+    val statusBanner: String? = null
+)
+
 sealed interface StudyLeafOverlay {
     data object None : StudyLeafOverlay
     data class Reader(
+        val documentId: Long,
+        val initialDocument: DocumentEntity? = null
+    ) : StudyLeafOverlay
+    data class DocumentEditor(
         val documentId: Long,
         val initialDocument: DocumentEntity? = null
     ) : StudyLeafOverlay
@@ -132,7 +144,11 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
     private val _aiState = MutableStateFlow(AiAssistantUiState())
     val aiState: StateFlow<AiAssistantUiState> = _aiState.asStateFlow()
 
+    private val _editorState = MutableStateFlow(DocumentEditorUiState())
+    val editorState: StateFlow<DocumentEditorUiState> = _editorState.asStateFlow()
+
     private var activeAiJob: Job? = null
+    private var activeEditorJob: Job? = null
     private var nextChatId: Long = 1L
 
     val documents: StateFlow<List<DocumentEntity>> = repository.documents.stateIn(
@@ -219,6 +235,132 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun openPageReorderBoard(docId: Long) {
         _uiState.update { it.copy(overlay = StudyLeafOverlay.PageReorderBoard(docId)) }
+    }
+
+    fun openDocumentEditor(docId: Long) {
+        val doc = documents.value.firstOrNull { it.id == docId } ?: return
+        activeEditorJob?.cancel()
+        _editorState.value = DocumentEditorUiState(isLoading = true)
+        _uiState.update {
+            it.copy(
+                selectedPreviewDocId = docId,
+                overlay = StudyLeafOverlay.DocumentEditor(docId, doc)
+            )
+        }
+        activeEditorJob = viewModelScope.launch {
+            val localText = engine.extractEditableText(doc.filePath)
+            val isPdfOrScan = doc.format == DocumentFormat.PDF || doc.format == DocumentFormat.SCAN
+            if (localText.length >= 24 || !isPdfOrScan) {
+                val resolved = localText.ifBlank { doc.summarySnippet }
+                _editorState.update { state ->
+                    state.copy(
+                        isLoading = false,
+                        isAiExtracting = false,
+                        extractedText = resolved,
+                        extractionVersion = state.extractionVersion + 1,
+                        statusBanner = if (isPdfOrScan) {
+                            "Extracted text on-device. Tap AI Extract Text if any scanned/styled page needs OCR."
+                        } else null
+                    )
+                }
+            } else {
+                // Automatically extract words from rendered PDF pages via Gemini Vision OCR
+                extractPdfWordsWithAi(doc, fallbackText = localText.ifBlank { doc.summarySnippet })
+            }
+        }
+    }
+
+    fun reExtractEditorTextWithAi(doc: DocumentEntity) {
+        activeEditorJob?.cancel()
+        activeEditorJob = viewModelScope.launch {
+            extractPdfWordsWithAi(doc, fallbackText = _editorState.value.extractedText.ifBlank { doc.summarySnippet })
+        }
+    }
+
+    private suspend fun extractPdfWordsWithAi(doc: DocumentEntity, fallbackText: String) {
+        _editorState.update { it.copy(isLoading = true, isAiExtracting = true, statusBanner = null) }
+        try {
+            val pageCount = engine.getPdfPageCount(doc.filePath).coerceIn(1, 6)
+            val bitmaps = buildList {
+                for (i in 0 until pageCount) {
+                    engine.renderPdfPage(doc.filePath, i, targetWidthPx = 1200)?.let { add(it) }
+                }
+            }
+            val aiText = if (bitmaps.isNotEmpty()) {
+                withTimeout(60_000L) {
+                    aiEngine.extractEditableTextFromPages(bitmaps, doc.title)
+                }
+            } else ""
+            if (aiText.isNotBlank()) {
+                engine.saveEditableTextCache(File(doc.filePath), aiText)
+                _editorState.update { state ->
+                    state.copy(
+                        isLoading = false,
+                        isAiExtracting = false,
+                        extractedText = aiText,
+                        extractionVersion = state.extractionVersion + 1,
+                        statusBanner = "Extracted editable text from $pageCount PDF page(s). Edit any word below and tap Save."
+                    )
+                }
+            } else {
+                _editorState.update { state ->
+                    state.copy(
+                        isLoading = false,
+                        isAiExtracting = false,
+                        extractedText = fallbackText,
+                        extractionVersion = state.extractionVersion + 1,
+                        statusBanner = "Loaded document notes. Edit directly or tap AI Extract Text to retry."
+                    )
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("StudyLeafEditor", "AI OCR extraction failed", e)
+            _editorState.update { state ->
+                state.copy(
+                    isLoading = false,
+                    isAiExtracting = false,
+                    extractedText = fallbackText,
+                    extractionVersion = state.extractionVersion + 1,
+                    statusBanner = "Offline/fallback text loaded (${e.localizedMessage ?: "AI unavailable"}). You can edit and save right away."
+                )
+            }
+        }
+    }
+
+    fun saveEditedDocument(
+        source: DocumentEntity,
+        newTitle: String,
+        editedText: String,
+        targetFormat: DocumentFormat,
+        overwriteOriginal: Boolean,
+        fontSizePt: Float
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true, processingLabel = "Saving edited ${targetFormat.label}…") }
+            val saved = repository.saveEditedDocument(
+                source = source,
+                newTitle = newTitle,
+                editedText = editedText,
+                targetFormat = targetFormat,
+                overwriteOriginal = overwriteOriginal,
+                fontSizePt = fontSizePt
+            )
+            _uiState.update {
+                it.copy(
+                    isProcessing = false,
+                    processingLabel = "",
+                    selectedPreviewDocId = saved.id,
+                    overlay = StudyLeafOverlay.Reader(saved.id, saved),
+                    snackbarMessage = if (overwriteOriginal && targetFormat == source.format) {
+                        "Updated \"${saved.title}\""
+                    } else {
+                        "Saved \"${saved.title}\" (${targetFormat.label})"
+                    }
+                )
+            }
+        }
     }
 
     fun openAiAssistant(docId: Long? = null, pageIndex: Int = 0) {
@@ -419,6 +561,7 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun closeOverlay() {
         activeAiJob?.cancel()
+        activeEditorJob?.cancel()
         _uiState.update { it.copy(overlay = StudyLeafOverlay.None) }
     }
 

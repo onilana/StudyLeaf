@@ -107,4 +107,17 @@
     <string name="about_checking_updates">Checking for updates…</string>
     <string name="about_up_to_date">StudyLeaf v%1$s is up to date</string>
     <string name="about_store_opened">Opened Play Store update page</string>
+
+    <!-- Document Editor -->
+    <string name="editor_title">Edit Document</string>
+    <string name="editor_extracting_text">Extracting editable text…</string>
+    <string name="editor_ai_extract">AI Extract Text</string>
+    <string name="editor_find_replace">Find &amp; Replace</string>
+    <string name="editor_save_title">Save Edited Document</string>
+    <string name="editor_overwrite_existing">Update Existing File</string>
+    <string name="editor_save_as_pdf">Save as New PDF Copy</string>
+    <string name="editor_save_as_word">Save as Editable Word (.docx)</string>
+    <string name="editor_placeholder">Start typing or tap AI Extract Text to pull words from PDF pages…</string>
+    <string name="cd_edit_document">Edit document text</string>
+    <string name="cd_redo">Redo last change</string>
 </resources>

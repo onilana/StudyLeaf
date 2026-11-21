@@ -22,8 +22,10 @@ import com.example.data.model.ScanEnhancementSettings
 import com.example.data.model.ScannerFilterMode
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.util.zip.Inflater
 import java.util.zip.ZipInputStream
 import kotlin.math.max
 import kotlin.math.min
@@ -42,6 +44,18 @@ class DocumentEngine(private val context: Context) {
 
     private val scansCacheDir: File
         get() = File(context.cacheDir, "scans").apply { if (!exists()) mkdirs() }
+
+    private val editableTextCacheDir: File
+        get() = File(context.filesDir, "editable_text").apply { if (!exists()) mkdirs() }
+
+    private fun sidecarTextFile(docFile: File): File =
+        File(editableTextCacheDir, "${docFile.name}.txt")
+
+    fun saveEditableTextCache(docFile: File, text: String) {
+        runCatching {
+            sidecarTextFile(docFile).writeText(text, Charsets.UTF_8)
+        }
+    }
 
     fun createTempScanFile(): File =
         File(scansCacheDir, "scan_${System.currentTimeMillis()}.jpg")
@@ -403,10 +417,235 @@ class DocumentEngine(private val context: Context) {
                 pdfDoc.finishPage(page)
             }
             FileOutputStream(outFile).use { pdfDoc.writeTo(it) }
+            saveEditableTextCache(outFile, bodyText)
         } finally {
             pdfDoc.close()
         }
         GeneratedFileInfo(outFile, max(1, pageNum), outFile.length())
+    }
+
+    suspend fun saveEditedWordDocx(
+        title: String,
+        bodyText: String
+    ): GeneratedFileInfo = withContext(Dispatchers.IO) {
+        val outFile = File(documentsDir, safeFileName(title, "docx"))
+        val paragraphs = bodyText.replace("\r\n", "\n").split("\n")
+        ExcelAndImageEngine.writeDocxDocument(
+            title = title,
+            paragraphs = paragraphs,
+            destFile = outFile
+        )
+        saveEditableTextCache(outFile, bodyText)
+        val estimatedPages = max(1, (bodyText.length / 2600) + 1)
+        GeneratedFileInfo(outFile, estimatedPages, outFile.length())
+    }
+
+    suspend fun extractEditableText(filePath: String): String = withContext(Dispatchers.IO) {
+        val file = File(filePath)
+        if (!file.exists()) return@withContext ""
+
+        val sidecar = sidecarTextFile(file)
+        if (sidecar.exists()) {
+            val cached = runCatching { sidecar.readText(Charsets.UTF_8) }.getOrDefault("")
+            if (cached.isNotBlank()) return@withContext cached
+        }
+
+        val lower = file.name.lowercase()
+        when {
+            lower.endsWith(".docx") || lower.endsWith(".doc") || lower.endsWith(".txt") || lower.endsWith(".md") -> {
+                readTextOrDocx(file)
+            }
+            lower.endsWith(".pdf") -> {
+                extractPdfTextOnDevice(file)
+            }
+            else -> ""
+        }
+    }
+
+    private fun extractPdfTextOnDevice(file: File): String {
+        return try {
+            val bytes = file.readBytes()
+            val latin = String(bytes, Charsets.ISO_8859_1)
+            val extractedChunks = mutableListOf<String>()
+
+            var searchPos = 0
+            while (searchPos < latin.length) {
+                val streamStartToken = latin.indexOf("stream", searchPos)
+                if (streamStartToken < 0) break
+                val dictStart = max(0, streamStartToken - 256)
+                val dictSlice = latin.substring(dictStart, streamStartToken)
+                val isFlate = dictSlice.contains("/FlateDecode")
+
+                var dataStart = streamStartToken + 6
+                if (dataStart < bytes.size && bytes[dataStart] == '\r'.code.toByte()) dataStart++
+                if (dataStart < bytes.size && bytes[dataStart] == '\n'.code.toByte()) dataStart++
+
+                val endStreamIdx = latin.indexOf("endstream", dataStart)
+                if (endStreamIdx < 0) break
+
+                val streamLength = (endStreamIdx - dataStart).coerceAtLeast(0)
+                if (streamLength in 1..(4 * 1024 * 1024)) {
+                    val rawSlice = bytes.copyOfRange(dataStart, endStreamIdx)
+                    val decoded = if (isFlate) inflateStreamBytes(rawSlice) else rawSlice
+                    if (decoded != null) {
+                        val contentStr = String(decoded, Charsets.ISO_8859_1)
+                        if (contentStr.contains("BT") && (contentStr.contains("Tj") || contentStr.contains("TJ"))) {
+                            val blockText = parsePdfTextOperators(contentStr)
+                            if (blockText.isNotBlank()) {
+                                extractedChunks.add(blockText)
+                            }
+                        }
+                    }
+                }
+                searchPos = endStreamIdx + 9
+            }
+
+            extractedChunks
+                .joinToString("\n\n")
+                .replace(Regex("[ \\t]+"), " ")
+                .replace(Regex("\\n{3,}"), "\n\n")
+                .trim()
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    private fun inflateStreamBytes(compressed: ByteArray): ByteArray? {
+        val inflater = Inflater()
+        return try {
+            inflater.setInput(compressed)
+            val out = ByteArrayOutputStream()
+            val buf = ByteArray(4096)
+            var guard = 0
+            while (!inflater.finished() && guard < 2048) {
+                val count = inflater.inflate(buf)
+                if (count <= 0) {
+                    if (inflater.needsInput() || inflater.needsDictionary()) break
+                } else {
+                    out.write(buf, 0, count)
+                }
+                guard++
+            }
+            if (out.size() > 0) out.toByteArray() else null
+        } catch (_: Exception) {
+            null
+        } finally {
+            inflater.end()
+        }
+    }
+
+    private fun parsePdfTextOperators(stream: String): String {
+        val sb = StringBuilder()
+        val btRegex = Regex("BT(.*?)ET", RegexOption.DOT_MATCHES_ALL)
+        btRegex.findAll(stream).forEach { match ->
+            val block = match.groupValues[1]
+            val lineOut = StringBuilder()
+            var i = 0
+            while (i < block.length) {
+                when (block[i]) {
+                    '(' -> {
+                        val (literal, nextIdx) = readPdfLiteralString(block, i)
+                        if (literal.isNotEmpty()) lineOut.append(literal)
+                        i = nextIdx
+                    }
+                    '<' -> {
+                        if (i + 1 < block.length && block[i + 1] != '<') {
+                            val close = block.indexOf('>', i + 1)
+                            if (close > i + 1) {
+                                val hexText = decodePdfHexString(block.substring(i + 1, close))
+                                if (hexText.isNotEmpty()) lineOut.append(hexText)
+                                i = close + 1
+                            } else {
+                                i++
+                            }
+                        } else {
+                            i += 2
+                        }
+                    }
+                    'T' -> {
+                        if (i + 1 < block.length && (block[i + 1] == 'd' || block[i + 1] == 'D' || block[i + 1] == '*')) {
+                            if (lineOut.isNotEmpty() && !lineOut.endsWith("\n")) {
+                                lineOut.append('\n')
+                            }
+                            i += 2
+                        } else {
+                            i++
+                        }
+                    }
+                    else -> i++
+                }
+            }
+            val cleaned = lineOut.toString()
+                .filter { ch -> ch == '\n' || ch == '\t' || ch.code in 32..126 || ch.code in 160..65533 }
+                .trim()
+            val readableRatio = if (cleaned.isEmpty()) 0f else {
+                cleaned.count { it.isLetterOrDigit() || it.isWhitespace() || it in ".,;:!?'-()[]/%&@#\"+" }.toFloat() / cleaned.length
+            }
+            if (cleaned.length >= 2 && readableRatio >= 0.72f) {
+                if (sb.isNotEmpty()) sb.append('\n')
+                sb.append(cleaned)
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun readPdfLiteralString(src: String, openParenIndex: Int): Pair<String, Int> {
+        val sb = StringBuilder()
+        var i = openParenIndex + 1
+        var depth = 1
+        while (i < src.length && depth > 0) {
+            val c = src[i]
+            if (c == '\\' && i + 1 < src.length) {
+                val next = src[i + 1]
+                when (next) {
+                    'n' -> { sb.append('\n'); i += 2 }
+                    'r' -> { sb.append('\n'); i += 2 }
+                    't' -> { sb.append('\t'); i += 2 }
+                    '(', ')', '\\' -> { sb.append(next); i += 2 }
+                    in '0'..'7' -> {
+                        var oct = ""
+                        var k = i + 1
+                        while (k < src.length && oct.length < 3 && src[k] in '0'..'7') {
+                            oct += src[k]
+                            k++
+                        }
+                        val code = oct.toIntOrNull(8)
+                        if (code != null && code in 32..126) sb.append(code.toChar())
+                        i = k
+                    }
+                    else -> { sb.append(next); i += 2 }
+                }
+            } else if (c == '(') {
+                depth++
+                sb.append(c)
+                i++
+            } else if (c == ')') {
+                depth--
+                if (depth > 0) sb.append(c)
+                i++
+            } else {
+                sb.append(c)
+                i++
+            }
+        }
+        return sb.toString() to i
+    }
+
+    private fun decodePdfHexString(hexRaw: String): String {
+        val hex = hexRaw.filter { !it.isWhitespace() }
+        if (hex.length < 2 || hex.length % 2 != 0) return ""
+        val bytes = ByteArray(hex.length / 2)
+        for (idx in bytes.indices) {
+            val value = hex.substring(idx * 2, idx * 2 + 2).toIntOrNull(16) ?: return ""
+            bytes[idx] = value.toByte()
+        }
+        val decoded = if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+            String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
+        } else {
+            String(bytes, Charsets.ISO_8859_1)
+        }
+        val printable = decoded.count { it.isLetterOrDigit() || it == ' ' || it in ".,;:!?'-()/" }
+        return if (decoded.isNotEmpty() && printable.toFloat() / decoded.length >= 0.75f) decoded else ""
     }
 
     suspend fun pdfToPngImages(
@@ -829,6 +1068,9 @@ class DocumentEngine(private val context: Context) {
                                 .replace("&amp;", "&")
                                 .replace("&lt;", "<")
                                 .replace("&gt;", ">")
+                                .replace("&quot;", "\"")
+                                .replace("&apos;", "'")
+                                .trim()
                             sb.append(stripped)
                             break
                         }

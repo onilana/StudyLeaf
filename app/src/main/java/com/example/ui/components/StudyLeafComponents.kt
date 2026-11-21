@@ -480,6 +480,7 @@ fun DocumentListItem(
     onRename: () -> Unit,
     onShare: () -> Unit,
     onDelete: () -> Unit,
+    onEditDocument: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
@@ -583,6 +584,21 @@ fun DocumentListItem(
                             onOpenReader()
                         }
                     )
+                    if (onEditDocument != null && (
+                            document.format == DocumentFormat.PDF ||
+                                document.format == DocumentFormat.SCAN ||
+                                document.format == DocumentFormat.WORD
+                            )
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Edit Text / Words") },
+                            leadingIcon = { Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = null) },
+                            onClick = {
+                                menuExpanded = false
+                                onEditDocument()
+                            }
+                        )
+                    }
                     if (document.format == DocumentFormat.PDF || document.format == DocumentFormat.SCAN) {
                         DropdownMenuItem(
                             text = { Text("Reorder / Split Pages") },

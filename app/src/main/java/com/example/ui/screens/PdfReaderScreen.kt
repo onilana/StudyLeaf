@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Draw
+import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.FormatStrikethrough
 import androidx.compose.material.icons.filled.FormatUnderlined
 import androidx.compose.material.icons.filled.Menu
@@ -136,6 +137,7 @@ fun PdfReaderScreen(
     onOpenReorderBoard: () -> Unit,
     onOpenAiForPage: (Int) -> Unit,
     onConvertToExcel: () -> Unit,
+    onEditDocument: () -> Unit,
     onShare: () -> Unit
 ) {
     BackHandler(onBack = onBack)
@@ -519,6 +521,28 @@ fun PdfReaderScreen(
                             }
                         }
 
+                        val isEditableTextDoc = document.format == DocumentFormat.PDF ||
+                            document.format == DocumentFormat.SCAN ||
+                            document.format == DocumentFormat.WORD
+
+                        if (isEditableTextDoc) {
+                            IconButton(
+                                onClick = {
+                                    toolsMenuExpanded = false
+                                    onEditDocument()
+                                },
+                                modifier = Modifier
+                                    .size(38.dp)
+                                    .testTag("reader_edit_text_top_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.EditNote,
+                                    contentDescription = stringResource(R.string.cd_edit_document),
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+                        }
+
                         // Share icon (compact)
                         IconButton(
                             onClick = onShare,
@@ -573,6 +597,24 @@ fun PdfReaderScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
+                            // Edit PDF / Word text
+                            if (document.format == DocumentFormat.PDF ||
+                                document.format == DocumentFormat.SCAN ||
+                                document.format == DocumentFormat.WORD
+                            ) {
+                                CompactReaderToolButton(
+                                    icon = Icons.Filled.EditNote,
+                                    label = "Edit Text",
+                                    selected = false,
+                                    tintOverride = MaterialTheme.colorScheme.primary,
+                                    onClick = {
+                                        toolsMenuExpanded = false
+                                        onEditDocument()
+                                    },
+                                    tag = "reader_edit_text_button"
+                                )
+                            }
+
                             // Gemini AI
                             CompactReaderToolButton(
                                 icon = Icons.Filled.AutoAwesome,

@@ -76,6 +76,7 @@ import com.example.data.model.ConversionToolType
 import com.example.ui.components.StudyLeafWindowSize
 import com.example.ui.components.calculateWindowSize
 import com.example.ui.screens.ConversionStudioScreen
+import com.example.ui.screens.DocumentEditorScreen
 import com.example.ui.screens.DocumentScannerScreen
 import com.example.ui.screens.FilesScreen
 import com.example.ui.screens.HistoryScreen
@@ -92,6 +93,7 @@ fun StudyLeafApp(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val aiState by viewModel.aiState.collectAsStateWithLifecycle()
+    val editorState by viewModel.editorState.collectAsStateWithLifecycle()
     val documents by viewModel.documents.collectAsStateWithLifecycle()
     val history by viewModel.history.collectAsStateWithLifecycle()
     val fileViewMode by viewModel.fileViewMode.collectAsStateWithLifecycle()
@@ -228,7 +230,33 @@ fun StudyLeafApp(
                             onOpenReorderBoard = { viewModel.openPageReorderBoard(doc.id) },
                             onOpenAiForPage = { pageIdx -> viewModel.openAiAssistant(doc.id, pageIdx) },
                             onConvertToExcel = { viewModel.openTool(ConversionToolType.EXCEL_CONVERTER, doc.id) },
+                            onEditDocument = { viewModel.openDocumentEditor(doc.id) },
                             onShare = { shareDoc(doc) }
+                        )
+                    } else {
+                        LaunchedEffect(Unit) { viewModel.closeOverlay() }
+                    }
+                }
+
+                is StudyLeafOverlay.DocumentEditor -> {
+                    val doc = documents.firstOrNull { it.id == overlay.documentId } ?: overlay.initialDocument
+                    if (doc != null) {
+                        DocumentEditorScreen(
+                            document = doc,
+                            editorState = editorState,
+                            windowSize = windowSize,
+                            onBack = { viewModel.openReader(doc.id) },
+                            onRunAiExtract = { viewModel.reExtractEditorTextWithAi(doc) },
+                            onSave = { newTitle, editedText, targetFormat, overwriteOriginal, fontSizePt ->
+                                viewModel.saveEditedDocument(
+                                    source = doc,
+                                    newTitle = newTitle,
+                                    editedText = editedText,
+                                    targetFormat = targetFormat,
+                                    overwriteOriginal = overwriteOriginal,
+                                    fontSizePt = fontSizePt
+                                )
+                            }
                         )
                     } else {
                         LaunchedEffect(Unit) { viewModel.closeOverlay() }
@@ -354,6 +382,7 @@ fun StudyLeafApp(
                                 onViewAllFiles = { viewModel.selectTab(StudyLeafTab.FILES) },
                                 onDocumentClick = openDocHandler,
                                 onOpenReader = viewModel::openReader,
+                                onEditDocument = viewModel::openDocumentEditor,
                                 onToggleFavorite = viewModel::toggleFavorite,
                                 onReorderPages = viewModel::openPageReorderBoard,
                                 onAskAi = { docId -> viewModel.openAiAssistant(docId, 0) },
@@ -399,6 +428,7 @@ fun StudyLeafApp(
                                 },
                                 onDocumentClick = openDocHandler,
                                 onOpenReader = viewModel::openReader,
+                                onEditDocument = viewModel::openDocumentEditor,
                                 onToggleFavorite = viewModel::toggleFavorite,
                                 onReorderPages = viewModel::openPageReorderBoard,
                                 onAskAi = { docId -> viewModel.openAiAssistant(docId, 0) },

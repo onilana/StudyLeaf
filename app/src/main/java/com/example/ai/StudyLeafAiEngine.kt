@@ -194,6 +194,26 @@ class StudyLeafAiEngine {
         )
     }
 
+    suspend fun extractEditableTextFromPages(
+        pageBitmaps: List<Bitmap>,
+        documentTitle: String
+    ): String {
+        val safeBitmaps = pageBitmaps.take(6).map { downscaleForPayload(it, maxDim = 1280) }
+        val prompt = content {
+            safeBitmaps.forEach { bmp ->
+                image(bmp)
+            }
+            text(
+                "Transcribe all readable text from these page images of \"$documentTitle\" " +
+                    "accurately so the user can edit the document. Preserve headings, paragraphs, " +
+                    "bullet lists, numbered items, and table rows using clean plain text. " +
+                    "Separate pages with a blank line. Do not add commentary or markdown code fences."
+            )
+        }
+        val response = generalModel.generateContent(prompt)
+        return response.text?.trim().orEmpty()
+    }
+
     private fun downscaleForPayload(bitmap: Bitmap, maxDim: Int = 1100): Bitmap {
         val largest = max(bitmap.width, bitmap.height)
         if (largest <= maxDim) return bitmap

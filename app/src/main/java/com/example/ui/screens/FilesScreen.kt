@@ -96,6 +96,7 @@ fun FilesScreen(
     onImportPhotos: () -> Unit,
     onDocumentClick: (DocumentEntity) -> Unit,
     onOpenReader: (Long) -> Unit,
+    onEditDocument: (Long) -> Unit,
     onToggleFavorite: (Long) -> Unit,
     onReorderPages: (Long) -> Unit,
     onAskAi: (Long) -> Unit,
@@ -150,6 +151,7 @@ fun FilesScreen(
                 onImportPhotos = onImportPhotos,
                 onDocumentClick = onDocumentClick,
                 onOpenReader = onOpenReader,
+                onEditDocument = onEditDocument,
                 onToggleFavorite = onToggleFavorite,
                 onReorderPages = onReorderPages,
                 onRenameRequest = onRenameRequest,
@@ -196,6 +198,7 @@ fun FilesScreen(
             onImportPhotos = onImportPhotos,
             onDocumentClick = onDocumentClick,
             onOpenReader = onOpenReader,
+            onEditDocument = onEditDocument,
             onToggleFavorite = onToggleFavorite,
             onReorderPages = onReorderPages,
             onRenameRequest = onRenameRequest,
@@ -228,6 +231,7 @@ private fun FilesVaultColumn(
     onImportPhotos: () -> Unit,
     onDocumentClick: (DocumentEntity) -> Unit,
     onOpenReader: (Long) -> Unit,
+    onEditDocument: (Long) -> Unit,
     onToggleFavorite: (Long) -> Unit,
     onReorderPages: (Long) -> Unit,
     onRenameRequest: (DocumentEntity) -> Unit,
@@ -419,7 +423,8 @@ private fun FilesVaultColumn(
                     onReorderPages = { onReorderPages(doc.id) },
                     onRename = { onRenameRequest(doc) },
                     onShare = { onShare(doc) },
-                    onDelete = { onDeleteRequest(doc) }
+                    onDelete = { onDeleteRequest(doc) },
+                    onEditDocument = { onEditDocument(doc.id) }
                 )
             }
         } else {

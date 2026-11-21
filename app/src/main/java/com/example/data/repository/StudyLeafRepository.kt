@@ -575,6 +575,78 @@ class StudyLeafRepository(
         return created
     }
 
+    suspend fun saveEditedDocument(
+        source: DocumentEntity,
+        newTitle: String,
+        editedText: String,
+        targetFormat: DocumentFormat,
+        overwriteOriginal: Boolean,
+        fontSizePt: Float = 13f
+    ): DocumentEntity {
+        val start = System.currentTimeMillis()
+        val resolvedTitle = newTitle.trim().ifBlank { source.title }
+        val info = when (targetFormat) {
+            DocumentFormat.WORD -> engine.saveEditedWordDocx(resolvedTitle, editedText)
+            else -> engine.textToPdf(
+                title = resolvedTitle,
+                bodyText = editedText,
+                fontSizePt = fontSizePt,
+                marginPt = 42
+            )
+        }
+        val duration = (System.currentTimeMillis() - start).coerceAtLeast(80L)
+        val now = System.currentTimeMillis()
+        val snippet = editedText.trim().replace(Regex("\\s+"), " ").take(96)
+            .ifBlank { "Edited in StudyLeaf Document Editor." }
+
+        val savedDoc = if (overwriteOriginal && targetFormat == source.format) {
+            val oldFile = File(source.filePath)
+            val updated = source.copy(
+                title = resolvedTitle,
+                filePath = info.file.absolutePath,
+                sizeBytes = info.sizeBytes,
+                pageCount = info.pageCount,
+                summarySnippet = snippet,
+                lastOpenedAt = now
+            )
+            documentDao.update(updated)
+            if (oldFile.exists() && oldFile.absolutePath != info.file.absolutePath) {
+                runCatching { oldFile.delete() }
+            }
+            updated
+        } else {
+            val created = DocumentEntity(
+                title = resolvedTitle,
+                filePath = info.file.absolutePath,
+                formatName = targetFormat.name,
+                sizeBytes = info.sizeBytes,
+                pageCount = info.pageCount,
+                folderName = if (overwriteOriginal) source.folderName else "Edited",
+                isFavorite = source.isFavorite,
+                summarySnippet = snippet,
+                lastOpenedAt = now,
+                createdAt = now
+            )
+            val id = documentDao.insert(created)
+            created.copy(id = id)
+        }
+
+        historyDao.insert(
+            ConversionHistoryEntity(
+                toolTypeName = ConversionToolType.WORD_TO_PDF.name,
+                sourceTitle = source.title,
+                resultTitle = resolvedTitle,
+                resultDocumentId = savedDoc.id,
+                sourceFormatName = source.formatName,
+                targetFormatName = targetFormat.name,
+                pageCount = info.pageCount,
+                fileSizeBytes = info.sizeBytes,
+                durationMs = duration
+            )
+        )
+        return savedDoc
+    }
+
     suspend fun warpScanPreview(
         source: Bitmap,
         corners: List<NormalizedPoint>,
