@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Paint
 import android.net.Uri
 import com.example.data.engine.DocumentEngine
 import com.example.data.engine.PdfSeedGenerator
@@ -581,7 +582,8 @@ class StudyLeafRepository(
         editedText: String,
         targetFormat: DocumentFormat,
         overwriteOriginal: Boolean,
-        fontSizePt: Float = 13f
+        fontSizePt: Float = 13f,
+        textAlignment: Paint.Align = Paint.Align.LEFT
     ): DocumentEntity {
         val start = System.currentTimeMillis()
         val resolvedTitle = newTitle.trim().ifBlank { source.title }
@@ -591,7 +593,8 @@ class StudyLeafRepository(
                 title = resolvedTitle,
                 bodyText = editedText,
                 fontSizePt = fontSizePt,
-                marginPt = 42
+                marginPt = 42,
+                textAlignment = textAlignment
             )
         }
         val duration = (System.currentTimeMillis() - start).coerceAtLeast(80L)

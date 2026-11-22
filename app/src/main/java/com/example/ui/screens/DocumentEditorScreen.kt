@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import android.graphics.Paint
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
@@ -27,11 +28,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
+import androidx.compose.material.icons.automirrored.filled.FormatAlignRight
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.automirrored.filled.WrapText
 import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.FindReplace
+import androidx.compose.material.icons.filled.FormatAlignCenter
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.SaveAs
@@ -64,6 +69,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -85,7 +91,8 @@ fun DocumentEditorScreen(
         editedText: String,
         targetFormat: DocumentFormat,
         overwriteOriginal: Boolean,
-        fontSizePt: Float
+        fontSizePt: Float,
+        textAlignment: Paint.Align
     ) -> Unit
 ) {
     var titleText by remember(document.id) { mutableStateOf(document.title) }
@@ -102,6 +109,7 @@ fun DocumentEditorScreen(
     var replaceStatus by remember { mutableStateOf<String?>(null) }
 
     var fontSizePt by remember { mutableFloatStateOf(13f) }
+    var textAlignment by remember { mutableStateOf(Paint.Align.LEFT) }
     var showSaveDialog by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
 
@@ -205,7 +213,8 @@ fun DocumentEditorScreen(
                                 bodyText,
                                 overwriteFormat,
                                 true,
-                                fontSizePt
+                                fontSizePt,
+                                textAlignment
                             )
                         },
                         modifier = Modifier
@@ -237,7 +246,8 @@ fun DocumentEditorScreen(
                                 bodyText,
                                 DocumentFormat.PDF,
                                 false,
-                                fontSizePt
+                                fontSizePt,
+                                textAlignment
                             )
                         },
                         modifier = Modifier
@@ -263,7 +273,8 @@ fun DocumentEditorScreen(
                                 bodyText,
                                 DocumentFormat.WORD,
                                 false,
-                                fontSizePt
+                                fontSizePt,
+                                textAlignment
                             )
                         },
                         modifier = Modifier
@@ -456,6 +467,49 @@ fun DocumentEditorScreen(
                     }
                 }
 
+                FilterChip(
+                    selected = false,
+                    onClick = {
+                        val reflowed = reflowExtractedParagraphs(bodyText)
+                        if (reflowed != bodyText) {
+                            if (undoHistory.size >= 40) undoHistory.removeAt(0)
+                            undoHistory.add(bodyText)
+                            redoHistory.clear()
+                            bodyText = reflowed
+                            hasUnsavedChanges = true
+                        }
+                    },
+                    label = { Text("Reflow Lines", style = MaterialTheme.typography.labelSmall) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.WrapText,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    },
+                    modifier = Modifier.testTag("editor_reflow_button")
+                )
+
+                listOf(
+                    Triple(Paint.Align.LEFT, Icons.AutoMirrored.Filled.FormatAlignLeft, "Left"),
+                    Triple(Paint.Align.CENTER, Icons.Filled.FormatAlignCenter, "Center"),
+                    Triple(Paint.Align.RIGHT, Icons.AutoMirrored.Filled.FormatAlignRight, "Right")
+                ).forEach { (align, icon, label) ->
+                    FilterChip(
+                        selected = textAlignment == align,
+                        onClick = { textAlignment = align },
+                        label = { Text(label, style = MaterialTheme.typography.labelSmall) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = "Align $label",
+                                modifier = Modifier.size(15.dp)
+                            )
+                        },
+                        modifier = Modifier.testTag("editor_align_${label.lowercase()}")
+                    )
+                }
+
                 listOf(11f to "Small", 13f to "Normal", 15f to "Large").forEach { (pt, label) ->
                     FilterChip(
                         selected = fontSizePt == pt,
@@ -646,6 +700,12 @@ fun DocumentEditorScreen(
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                             Spacer(modifier = Modifier.height(8.dp))
 
+                            val composeAlign = when (textAlignment) {
+                                Paint.Align.CENTER -> TextAlign.Center
+                                Paint.Align.RIGHT -> TextAlign.End
+                                else -> TextAlign.Start
+                            }
+
                             OutlinedTextField(
                                 value = bodyText,
                                 onValueChange = { updateBody(it) },
@@ -658,7 +718,8 @@ fun DocumentEditorScreen(
                                 },
                                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                                     fontSize = (fontSizePt + 2f).sp,
-                                    lineHeight = ((fontSizePt + 2f) * 1.52f).sp
+                                    lineHeight = ((fontSizePt + 2f) * 1.52f).sp,
+                                    textAlign = composeAlign
                                 ),
                                 minLines = 18,
                                 colors = OutlinedTextFieldDefaults.colors(
@@ -677,5 +738,36 @@ fun DocumentEditorScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * Joins accidental hard line breaks inside paragraphs while preserving blank-line paragraph breaks,
+ * numbered/bulleted lists, and short headings.
+ */
+private fun reflowExtractedParagraphs(raw: String): String {
+    if (raw.isBlank()) return raw
+    val normalized = raw.replace("\r\n", "\n").trim()
+    val paragraphs = normalized.split(Regex("\\n{2,}"))
+    return paragraphs.joinToString("\n\n") { para ->
+        val lines = para.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.size <= 1) return@joinToString lines.firstOrNull().orEmpty()
+        val out = StringBuilder()
+        for (idx in lines.indices) {
+            val line = lines[idx]
+            val startsList = line.startsWith("•") || line.startsWith("- ") ||
+                line.startsWith("* ") || Regex("^\\d+[.)]\\s+").containsMatchIn(line)
+            if (out.isNotEmpty()) {
+                if (startsList) {
+                    out.append('\n')
+                } else if (out.endsWith("-") && !out.endsWith(" -")) {
+                    out.deleteCharAt(out.length - 1)
+                } else {
+                    out.append(' ')
+                }
+            }
+            out.append(line)
+        }
+        out.toString()
     }
 }

@@ -1,10 +1,8 @@
 package com.example.ui.screens
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +12,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -23,33 +20,28 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.PictureAsPdf
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.StickyNote2
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Summarize
-import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -58,29 +50,24 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.studyleaf.R
-import com.example.ai.AiChatMessage
-import com.example.ai.StructuredStudyDeck
-import com.example.ai.StudyFlashcard
 import com.example.data.local.DocumentEntity
 import com.example.ui.AiAssistantMode
 import com.example.ui.AiAssistantUiState
-import com.example.ui.AiDeckState
-import com.example.ui.AiSummaryState
 import com.example.ui.components.FormatBadge
 import com.example.ui.components.StudyLeafWindowSize
+import com.studyleaf.R
 
 @Composable
 fun StudyAiAssistantScreen(
@@ -88,15 +75,13 @@ fun StudyAiAssistantScreen(
     activeDoc: DocumentEntity?,
     pageIndex: Int,
     aiState: AiAssistantUiState,
-    hasApiKey: Boolean,
-    selectedModel: String,
     windowSize: StudyLeafWindowSize,
-    onOpenApiKeySettings: () -> Unit,
     onSelectDocument: (Long) -> Unit,
     onSelectMode: (AiAssistantMode) -> Unit,
-    onRunSummary: () -> Unit,
-    onRunFlashcards: () -> Unit,
-    onSendQuestion: (String) -> Unit,
+    onOpenGeminiInApp: (toolbarColorArgb: Int, mode: AiAssistantMode?, customQuestion: String) -> Unit,
+    onSharePageToGeminiApp: (mode: AiAssistantMode, customQuestion: String) -> Unit,
+    onUpdateSavedReplyDraft: (String) -> Unit,
+    onPasteClipboardReply: () -> Unit,
     onPinSummaryAsNote: (String) -> Unit,
     onExportGuideToPdf: (String, String) -> Unit,
     onBack: () -> Unit
@@ -104,7 +89,7 @@ fun StudyAiAssistantScreen(
     BackHandler(onBack = onBack)
 
     var questionInput by remember { mutableStateOf("") }
-    val flippedCards = remember { mutableStateMapOf<Int, Boolean>() }
+    val toolbarColorArgb = MaterialTheme.colorScheme.primary.toArgb()
 
     Column(
         modifier = Modifier
@@ -154,15 +139,17 @@ fun StudyAiAssistantScreen(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "StudyLeaf AI Companion",
+                            text = "Google Gemini",
                             style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = if (activeDoc != null) {
                                 "${activeDoc.title} • Page ${pageIndex + 1}"
                             } else {
-                                "Select a document to analyze"
+                                "Sign in with your own Google account"
                             },
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.secondary,
@@ -175,19 +162,15 @@ fun StudyAiAssistantScreen(
                         Spacer(modifier = Modifier.width(4.dp))
                     }
                     IconButton(
-                        onClick = onOpenApiKeySettings,
+                        onClick = { onOpenGeminiInApp(toolbarColorArgb, null, "") },
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
-                            .testTag("ai_manage_key_button")
+                            .testTag("ai_open_account_top_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.Key,
-                            contentDescription = stringResource(R.string.cd_manage_api_key),
-                            tint = if (hasApiKey) {
-                                MaterialTheme.colorScheme.secondary
-                            } else {
-                                MaterialTheme.colorScheme.error
-                            }
+                            imageVector = Icons.Filled.AccountCircle,
+                            contentDescription = stringResource(R.string.cd_open_gemini_account),
+                            tint = MaterialTheme.colorScheme.primary
                         )
                     }
                 }
@@ -225,7 +208,7 @@ fun StudyAiAssistantScreen(
                     }
                 }
 
-                // Mode Switcher Pills: Summarize | Flashcards | Ask Gemini
+                // Mode Switcher Pills: Summary | Flashcards | Ask Gemini
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -277,564 +260,102 @@ fun StudyAiAssistantScreen(
             }
         }
 
-        // User API Key Banner (shown whenever user has not added their own key yet)
-        if (!hasApiKey) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = windowSize.horizontalMargin, vertical = 10.dp),
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f))
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Key,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Text(
-                            text = "Connect Your Own Gemini API Key",
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
-                    }
-                    Text(
-                        text = "AI runs directly on your own free Google Gemini quota. Add your personal key to start summarizing, creating flashcards, or chatting.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.9f)
-                    )
-                    Button(
-                        onClick = onOpenApiKeySettings,
-                        shape = CircleShape,
-                        modifier = Modifier.testTag("ai_setup_key_banner_button")
-                    ) {
-                        Icon(Icons.Filled.Key, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Add Your Gemini API Key")
-                    }
-                }
-            }
-        } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = windowSize.horizontalMargin, vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Using your own Gemini key • $selectedModel",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Surface(
-                    onClick = onOpenApiKeySettings,
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    modifier = Modifier.testTag("ai_change_key_chip")
-                ) {
-                    Text(
-                        text = "Change Key",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                    )
-                }
-            }
-        }
-
         // Main Workspace Body
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-        ) {
-            when (aiState.activeMode) {
-                AiAssistantMode.SUMMARIZE -> SummaryTabContent(
-                    summaryState = aiState.summaryState,
-                    activeDoc = activeDoc,
-                    pageIndex = pageIndex,
-                    windowSize = windowSize,
-                    onGenerate = onRunSummary,
-                    onPinAsNote = onPinSummaryAsNote,
-                    onExportPdf = { text ->
-                        val title = "${activeDoc?.title ?: "Document"} — AI Summary"
-                        onExportGuideToPdf(title, text)
-                    }
-                )
-
-                AiAssistantMode.FLASHCARDS -> FlashcardsTabContent(
-                    deckState = aiState.deckState,
-                    flippedCards = flippedCards,
-                    activeDoc = activeDoc,
-                    windowSize = windowSize,
-                    onGenerate = onRunFlashcards,
-                    onExportDeckPdf = { deck ->
-                        val body = buildString {
-                            appendLine(deck.overview)
-                            appendLine()
-                            appendLine("KEY TAKEAWAYS")
-                            deck.keyTakeaways.forEachIndexed { i, point ->
-                                appendLine("${i + 1}. $point")
-                            }
-                            appendLine()
-                            appendLine("STUDY FLASHCARDS")
-                            deck.flashcards.forEachIndexed { i, card ->
-                                appendLine("Q${i + 1} [${card.difficulty}]: ${card.question}")
-                                appendLine("A${i + 1}: ${card.answer}")
-                                appendLine()
-                            }
-                        }
-                        onExportGuideToPdf(deck.title, body)
-                    }
-                )
-
-                AiAssistantMode.ASK -> AskGeminiTabContent(
-                    messages = aiState.chatMessages,
-                    isSending = aiState.isChatLoading,
-                    chatError = aiState.chatError,
-                    questionInput = questionInput,
-                    onInputChange = { questionInput = it },
-                    onSend = { prompt ->
-                        if (prompt.isNotBlank()) {
-                            onSendQuestion(prompt.trim())
-                            questionInput = ""
-                        }
-                    },
-                    windowSize = windowSize
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SummaryTabContent(
-    summaryState: AiSummaryState,
-    activeDoc: DocumentEntity?,
-    pageIndex: Int,
-    windowSize: StudyLeafWindowSize,
-    onGenerate: () -> Unit,
-    onPinAsNote: (String) -> Unit,
-    onExportPdf: (String) -> Unit
-) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = windowSize.horizontalMargin),
-        contentPadding = PaddingValues(vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        when (summaryState) {
-            AiSummaryState.Idle -> {
-                item {
-                    AiPromptHeroCard(
-                        title = "Summarize This Page with Gemini",
-                        subtitle = if (activeDoc != null) {
-                            "Analyze Page ${pageIndex + 1} of \"${activeDoc.title}\" visually and stream key concepts, formulas, and exam cues."
-                        } else {
-                            "Select a document above to generate an instant visual study summary."
-                        },
-                        buttonLabel = "Summarize Page",
-                        enabled = activeDoc != null,
-                        onClick = onGenerate,
-                        buttonTag = "ai_summarize_button"
-                    )
-                }
-            }
-
-            AiSummaryState.Loading -> {
-                item {
-                    AiLoadingCard("Reading document page with Gemini…")
-                }
-            }
-
-            is AiSummaryState.Streaming -> {
-                item {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f))
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            LinearProgressIndicator(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(CircleShape),
-                                color = MaterialTheme.colorScheme.secondary
-                            )
-                            Text(
-                                text = summaryState.text,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
-                }
-            }
-
-            is AiSummaryState.Success -> {
-                item {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.CheckCircle,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.secondary,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Text(
-                                    text = "Page ${pageIndex + 1} Study Summary",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
-                            Text(
-                                text = summaryState.text,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                FilledTonalButton(
-                                    onClick = { onPinAsNote(summaryState.text.take(280)) },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("ai_pin_note_button"),
-                                    shape = RoundedCornerShape(14.dp)
-                                ) {
-                                    Icon(Icons.Filled.StickyNote2, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Pin Note", maxLines = 1)
-                                }
-                                Button(
-                                    onClick = { onExportPdf(summaryState.text) },
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("ai_export_summary_pdf"),
-                                    shape = RoundedCornerShape(14.dp)
-                                ) {
-                                    Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Save PDF", maxLines = 1)
-                                }
-                            }
-                            OutlinedButton(
-                                onClick = onGenerate,
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Regenerate Summary")
-                            }
-                        }
-                    }
-                }
-            }
-
-            is AiSummaryState.Error -> {
-                item {
-                    AiErrorCard(message = summaryState.message, onRetry = onGenerate)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FlashcardsTabContent(
-    deckState: AiDeckState,
-    flippedCards: MutableMap<Int, Boolean>,
-    activeDoc: DocumentEntity?,
-    windowSize: StudyLeafWindowSize,
-    onGenerate: () -> Unit,
-    onExportDeckPdf: (StructuredStudyDeck) -> Unit
-) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = windowSize.horizontalMargin),
-        contentPadding = PaddingValues(vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        when (deckState) {
-            AiDeckState.Idle -> {
-                item {
-                    AiPromptHeroCard(
-                        title = "Generate Structured Study Flashcards",
-                        subtitle = "Uses Gemini structured JSON output to build interactive tap-to-flip flashcards and key exam takeaways directly from your page.",
-                        buttonLabel = "Build Study Deck",
-                        enabled = activeDoc != null,
-                        onClick = onGenerate,
-                        buttonTag = "ai_generate_deck_button"
-                    )
-                }
-            }
-
-            AiDeckState.Loading -> {
-                item {
-                    AiLoadingCard("Structuring key takeaways & flashcards…")
-                }
-            }
-
-            is AiDeckState.Success -> {
-                val deck = deckState.deck
-                item {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(
-                                text = deck.title,
-                                style = MaterialTheme.typography.titleMedium,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-                            if (deck.overview.isNotBlank()) {
-                                Text(
-                                    text = deck.overview,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.88f)
-                                )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                FilledTonalButton(
-                                    onClick = { onExportDeckPdf(deck) },
-                                    shape = CircleShape,
-                                    modifier = Modifier.testTag("ai_export_deck_pdf")
-                                ) {
-                                    Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Export Study Guide PDF")
-                                }
-                                OutlinedButton(
-                                    onClick = onGenerate,
-                                    shape = CircleShape
-                                ) {
-                                    Text("Refresh", color = MaterialTheme.colorScheme.onPrimaryContainer)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (deck.keyTakeaways.isNotEmpty()) {
-                    item {
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = MaterialTheme.colorScheme.surfaceContainer,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                        ) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Text("Key Takeaways", style = MaterialTheme.typography.titleSmall)
-                                deck.keyTakeaways.forEach { point ->
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalAlignment = Alignment.Top
-                                    ) {
-                                        Text("•", color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.Bold)
-                                        Text(
-                                            text = point,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurface
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                itemsIndexed(deck.flashcards) { idx, card ->
-                    val revealed = flippedCards[idx] == true
-                    FlashcardItem(
-                        index = idx,
-                        card = card,
-                        revealed = revealed,
-                        onToggle = { flippedCards[idx] = !revealed }
-                    )
-                }
-            }
-
-            is AiDeckState.Error -> {
-                item {
-                    AiErrorCard(message = deckState.message, onRetry = onGenerate)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FlashcardItem(
-    index: Int,
-    card: StudyFlashcard,
-    revealed: Boolean,
-    onToggle: () -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onToggle)
-            .animateContentSize()
-            .testTag("flashcard_$index"),
-        shape = RoundedCornerShape(16.dp),
-        color = if (revealed) {
-            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
-        } else {
-            MaterialTheme.colorScheme.surfaceContainer
-        },
-        border = BorderStroke(
-            width = 1.dp,
-            color = if (revealed) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.outlineVariant
-        )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                ) {
-                    Text(
-                        text = "Card ${index + 1} • ${card.difficulty}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                    )
-                }
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.TouchApp,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Text(
-                        text = if (revealed) "Answer" else "Tap to reveal",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Text(
-                text = card.question,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            if (revealed) {
-                Text(
-                    text = card.answer,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AskGeminiTabContent(
-    messages: List<AiChatMessage>,
-    isSending: Boolean,
-    chatError: String?,
-    questionInput: String,
-    onInputChange: (String) -> Unit,
-    onSend: (String) -> Unit,
-    windowSize: StudyLeafWindowSize
-) {
-    val quickPrompts = listOf(
-        "Explain the core concept simply",
-        "List key formulas & definitions",
-        "Quiz me with 3 exam questions"
-    )
-
-    Column(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .padding(horizontal = windowSize.horizontalMargin),
             contentPadding = PaddingValues(vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            if (messages.isEmpty()) {
-                item {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainer,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            // Account Notice Strip
+            item {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.6f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(18.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Text(
-                                text = "Ask anything about this document",
-                                style = MaterialTheme.typography.titleSmall
+                        Icon(
+                            imageVector = Icons.Filled.AccountCircle,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Text(
+                            text = stringResource(R.string.gemini_account_subtitle),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+            }
+
+            // Active Mode Action Card
+            item {
+                val (headline, description, primaryLabel) = when (aiState.activeMode) {
+                    AiAssistantMode.SUMMARIZE -> Triple(
+                        "Summarize Page ${pageIndex + 1}",
+                        "Copies a structured summary prompt (with your page text) and opens your own Google Gemini account inside StudyLeaf.",
+                        "Summarize in Gemini (In-App)"
+                    )
+                    AiAssistantMode.FLASHCARDS -> Triple(
+                        "Build Study Flashcards",
+                        "Copies a Q&A flashcard prompt from Page ${pageIndex + 1} so your Google Gemini account generates exam-ready cards.",
+                        "Create Flashcards in Gemini"
+                    )
+                    AiAssistantMode.ASK -> Triple(
+                        "Ask Your Own Gemini Account",
+                        "Type any question about Page ${pageIndex + 1}—StudyLeaf copies your question & page context and opens Gemini right inside the app.",
+                        "Ask in Gemini (In-App)"
+                    )
+                }
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = headline,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = description,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        if (aiState.activeMode == AiAssistantMode.ASK) {
+                            val quickPrompts = listOf(
+                                "Explain the core concept simply",
+                                "List key formulas & definitions",
+                                "Quiz me with 3 exam questions"
                             )
-                            Text(
-                                text = "Gemini inspects the rendered page image so you can ask about diagrams, equations, lab steps, or scanned handwriting.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            OutlinedTextField(
+                                value = questionInput,
+                                onValueChange = { questionInput = it },
+                                placeholder = { Text("What would you like to ask Gemini about this page?") },
+                                minLines = 2,
+                                maxLines = 4,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("ai_question_input")
                             )
                             Row(
                                 modifier = Modifier
@@ -842,56 +363,88 @@ private fun AskGeminiTabContent(
                                     .horizontalScroll(rememberScrollState()),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                quickPrompts.forEach { prompt ->
-                                    FilledTonalButton(
-                                        onClick = { onSend(prompt) },
-                                        enabled = !isSending,
+                                quickPrompts.forEach { preset ->
+                                    FilterChip(
+                                        selected = questionInput == preset,
+                                        onClick = { questionInput = preset },
                                         shape = CircleShape,
-                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                                    ) {
-                                        Text(prompt, style = MaterialTheme.typography.labelSmall)
-                                    }
+                                        label = { Text(preset, style = MaterialTheme.typography.labelSmall) }
+                                    )
                                 }
                             }
                         }
-                    }
-                }
-            }
 
-            items(messages, key = { it.id }) { msg ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = if (msg.isUser) Arrangement.End else Arrangement.Start
-                ) {
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(0.88f),
-                        shape = RoundedCornerShape(
-                            topStart = 18.dp,
-                            topEnd = 18.dp,
-                            bottomStart = if (msg.isUser) 18.dp else 4.dp,
-                            bottomEnd = if (msg.isUser) 4.dp else 18.dp
-                        ),
-                        color = if (msg.isUser) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.surfaceContainer
-                        },
-                        border = if (msg.isUser) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        // Primary Button: Open Google Gemini in-app (Sign into own Google account)
+                        Button(
+                            onClick = {
+                                onOpenGeminiInApp(toolbarColorArgb, aiState.activeMode, questionInput)
+                            },
+                            enabled = activeDoc != null,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 50.dp)
+                                .testTag("ai_open_gemini_in_app_button")
                         ) {
-                            Text(
-                                text = msg.text.ifBlank { "Thinking…" },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (msg.isUser) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
                             )
-                            if (msg.isStreaming) {
-                                LinearProgressIndicator(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(2.dp),
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(primaryLabel)
+                        }
+
+                        // Secondary Button (Option 1): Share rendered Page PNG directly to Google Gemini app
+                        FilledTonalButton(
+                            onClick = {
+                                onSharePageToGeminiApp(aiState.activeMode, questionInput)
+                            },
+                            enabled = activeDoc != null && !aiState.isPreparingShare,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .testTag("ai_share_page_gemini_app_button")
+                        ) {
+                            if (aiState.isPreparingShare) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Preparing page image…")
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.Share,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (aiState.isGeminiAppInstalled) {
+                                        "Send Page Image to Gemini App"
+                                    } else {
+                                        "Share Page Image to Gemini / AI App"
+                                    }
+                                )
+                            }
+                        }
+
+                        if (aiState.lastCopiedPrompt.isNotBlank()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.CheckCircle,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.secondary,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = "Prompt copied to clipboard — just tap Paste in Gemini.",
+                                    style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.secondary
                                 )
                             }
@@ -900,196 +453,103 @@ private fun AskGeminiTabContent(
                 }
             }
 
-            if (chatError != null) {
-                item {
-                    AiErrorCard(
-                        message = chatError,
-                        onRetry = {
-                            val lastUser = messages.lastOrNull { it.isUser }?.text
-                            if (!lastUser.isNullOrBlank()) onSend(lastUser)
-                        }
-                    )
-                }
-            }
-        }
-
-        // Composer Bar
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            tonalElevation = 4.dp
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = questionInput,
-                    onValueChange = onInputChange,
-                    placeholder = { Text("Ask Gemini about this page…") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(24.dp),
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("ai_question_input")
-                )
-                Button(
-                    onClick = { onSend(questionInput) },
-                    enabled = questionInput.isNotBlank() && !isSending,
-                    shape = CircleShape,
-                    contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier
-                        .size(48.dp)
-                        .testTag("ai_send_question_button"),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            // Save Gemini Reply Back into StudyLeaf Card
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                 ) {
-                    if (isSending) {
-                        CircularProgressIndicator(
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = stringResource(R.string.gemini_paste_reply_title),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            OutlinedButton(
+                                onClick = onPasteClipboardReply,
+                                shape = CircleShape,
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                modifier = Modifier.testTag("ai_paste_clipboard_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.ContentPaste,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Spacer(modifier = Modifier.width(5.dp))
+                                Text("Paste", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                        Text(
+                            text = "Copy Gemini's answer, tap Paste, and save it straight onto your document as a sticky note or a new PDF study guide.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    } else {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.Send,
-                            contentDescription = "Send question",
-                            modifier = Modifier.size(20.dp)
+                        OutlinedTextField(
+                            value = aiState.savedReplyDraft,
+                            onValueChange = onUpdateSavedReplyDraft,
+                            placeholder = { Text("Paste Gemini's summary, flashcards, or notes here…") },
+                            minLines = 3,
+                            maxLines = 8,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("ai_saved_reply_input")
                         )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilledTonalButton(
+                                onClick = { onPinSummaryAsNote(aiState.savedReplyDraft) },
+                                enabled = aiState.savedReplyDraft.isNotBlank() && activeDoc != null,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("ai_pin_note_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.StickyNote2,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Pin Note", maxLines = 1)
+                            }
+                            Button(
+                                onClick = {
+                                    val title = "${activeDoc?.title ?: "Document"} — Gemini Study Notes"
+                                    onExportGuideToPdf(title, aiState.savedReplyDraft)
+                                },
+                                enabled = aiState.savedReplyDraft.isNotBlank(),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("ai_export_summary_pdf")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.PictureAsPdf,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Save PDF", maxLines = 1)
+                            }
+                        }
                     }
                 }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AiPromptHeroCard(
-    title: String,
-    subtitle: String,
-    buttonLabel: String,
-    enabled: Boolean,
-    onClick: () -> Unit,
-    buttonTag: String
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(46.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(MaterialTheme.colorScheme.tertiaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.AutoAwesome,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Button(
-                onClick = onClick,
-                enabled = enabled,
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 50.dp)
-                    .testTag(buttonTag)
-            ) {
-                Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(buttonLabel)
-            }
-        }
-    }
-}
-
-@Composable
-private fun AiLoadingCard(label: String) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            CircularProgressIndicator(
-                color = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.size(26.dp),
-                strokeWidth = 3.dp
-            )
-            Text(text = label, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-
-@Composable
-private fun AiErrorCard(message: String, onRetry: () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.errorContainer,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f))
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.ErrorOutline,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onErrorContainer,
-                    modifier = Modifier.size(20.dp)
-                )
-                Text(
-                    text = "Gemini Request Error",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-            }
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onErrorContainer
-            )
-            OutlinedButton(
-                onClick = onRetry,
-                shape = CircleShape,
-                modifier = Modifier.testTag("ai_retry_button")
-            ) {
-                Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Retry", color = MaterialTheme.colorScheme.onErrorContainer)
             }
         }
     }

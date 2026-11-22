@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Article
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CallMerge
 import androidx.compose.material.icons.filled.CheckCircle
@@ -30,7 +31,6 @@ import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.OfflinePin
 import androidx.compose.material.icons.filled.Person
@@ -62,6 +62,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -92,7 +93,6 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     windowSize: StudyLeafWindowSize,
     isDarkTheme: Boolean,
-    hasApiKey: Boolean,
     documents: List<DocumentEntity>,
     totalConversions: Int,
     searchQuery: String,
@@ -101,7 +101,7 @@ fun HomeScreen(
     selectedDocAnnotationCount: Int,
     engine: DocumentEngine,
     onToggleTheme: () -> Unit,
-    onOpenApiKeySettings: () -> Unit,
+    onOpenGeminiAccount: (Int) -> Unit,
     onSearchChange: (String) -> Unit,
     onFilterChange: (LibraryFilter) -> Unit,
     onQuickToolClick: (ConversionToolType) -> Unit,
@@ -155,7 +155,6 @@ fun HomeScreen(
             HomeMainColumn(
                 greeting = greeting,
                 isDarkTheme = isDarkTheme,
-                hasApiKey = hasApiKey,
                 documents = filteredDocs,
                 totalCount = documents.size,
                 totalConversions = totalConversions,
@@ -163,7 +162,7 @@ fun HomeScreen(
                 activeFilter = activeFilter,
                 selectedDocId = selectedPreviewDoc?.id,
                 onToggleTheme = onToggleTheme,
-                onOpenApiKeySettings = onOpenApiKeySettings,
+                onOpenGeminiAccount = onOpenGeminiAccount,
                 onSearchChange = onSearchChange,
                 onFilterChange = onFilterChange,
                 onQuickToolClick = onQuickToolClick,
@@ -203,7 +202,6 @@ fun HomeScreen(
         HomeMainColumn(
             greeting = greeting,
             isDarkTheme = isDarkTheme,
-            hasApiKey = hasApiKey,
             documents = filteredDocs,
             totalCount = documents.size,
             totalConversions = totalConversions,
@@ -211,7 +209,7 @@ fun HomeScreen(
             activeFilter = activeFilter,
             selectedDocId = null,
             onToggleTheme = onToggleTheme,
-            onOpenApiKeySettings = onOpenApiKeySettings,
+            onOpenGeminiAccount = onOpenGeminiAccount,
             onSearchChange = onSearchChange,
             onFilterChange = onFilterChange,
             onQuickToolClick = onQuickToolClick,
@@ -237,7 +235,6 @@ fun HomeScreen(
 private fun HomeMainColumn(
     greeting: String,
     isDarkTheme: Boolean,
-    hasApiKey: Boolean,
     documents: List<DocumentEntity>,
     totalCount: Int,
     totalConversions: Int,
@@ -245,7 +242,7 @@ private fun HomeMainColumn(
     activeFilter: LibraryFilter,
     selectedDocId: Long?,
     onToggleTheme: () -> Unit,
-    onOpenApiKeySettings: () -> Unit,
+    onOpenGeminiAccount: (Int) -> Unit,
     onSearchChange: (String) -> Unit,
     onFilterChange: (LibraryFilter) -> Unit,
     onQuickToolClick: (ConversionToolType) -> Unit,
@@ -603,12 +600,12 @@ private fun HomeMainColumn(
         }
     }
 
+    val toolbarColorArgb = MaterialTheme.colorScheme.primary.toArgb()
     if (showAboutDialog) {
         StudyLeafAboutDialog(
-            hasApiKey = hasApiKey,
-            onManageApiKey = {
+            onOpenGeminiAccount = {
                 showAboutDialog = false
-                onOpenApiKeySettings()
+                onOpenGeminiAccount(toolbarColorArgb)
             },
             onDismiss = { showAboutDialog = false }
         )
@@ -617,8 +614,7 @@ private fun HomeMainColumn(
 
 @Composable
 private fun StudyLeafAboutDialog(
-    hasApiKey: Boolean,
-    onManageApiKey: () -> Unit,
+    onOpenGeminiAccount: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -712,24 +708,20 @@ private fun StudyLeafAboutDialog(
                 }
 
                 OutlinedButton(
-                    onClick = onManageApiKey,
+                    onClick = onOpenGeminiAccount,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("about_manage_api_key_button"),
+                        .testTag("about_open_gemini_account_button"),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.Key,
+                        imageVector = Icons.Filled.AccountCircle,
                         contentDescription = null,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (hasApiKey) {
-                            "Gemini API Key (Configured)"
-                        } else {
-                            "Add Your Gemini API Key"
-                        },
+                        text = stringResource(R.string.gemini_account_open_in_app),
                         style = MaterialTheme.typography.labelLarge
                     )
                 }

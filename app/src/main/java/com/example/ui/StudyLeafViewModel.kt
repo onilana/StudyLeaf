@@ -3,13 +3,12 @@ package com.example.ui
 import android.app.Application
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.Paint
 import android.net.Uri
 import android.util.Log
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.ai.AiChatMessage
-import com.example.ai.StructuredStudyDeck
 import com.example.ai.StudyLeafAiEngine
 import com.example.data.engine.DocumentEngine
 import com.example.data.local.ConversionHistoryEntity
@@ -28,9 +27,8 @@ import com.example.data.model.ScannerFilterMode
 import com.example.data.model.SortOrder
 import com.example.data.model.ThemePreference
 import com.example.data.repository.StudyLeafRepository
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -39,8 +37,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 
 enum class StudyLeafTab(val label: String) {
     HOME("Home"),
@@ -64,28 +63,13 @@ enum class AiAssistantMode(val label: String) {
     ASK("Ask Gemini")
 }
 
-sealed interface AiSummaryState {
-    data object Idle : AiSummaryState
-    data object Loading : AiSummaryState
-    data class Streaming(val text: String) : AiSummaryState
-    data class Success(val text: String) : AiSummaryState
-    data class Error(val message: String) : AiSummaryState
-}
-
-sealed interface AiDeckState {
-    data object Idle : AiDeckState
-    data object Loading : AiDeckState
-    data class Success(val deck: StructuredStudyDeck) : AiDeckState
-    data class Error(val message: String) : AiDeckState
-}
-
 data class AiAssistantUiState(
     val activeMode: AiAssistantMode = AiAssistantMode.SUMMARIZE,
-    val summaryState: AiSummaryState = AiSummaryState.Idle,
-    val deckState: AiDeckState = AiDeckState.Idle,
-    val chatMessages: List<AiChatMessage> = emptyList(),
-    val isChatLoading: Boolean = false,
-    val chatError: String? = null
+    val extractedPreview: String = "",
+    val lastCopiedPrompt: String = "",
+    val savedReplyDraft: String = "",
+    val isPreparingShare: Boolean = false,
+    val isGeminiAppInstalled: Boolean = false
 )
 
 data class DocumentEditorUiState(
@@ -127,8 +111,7 @@ data class StudyLeafUiState(
     val selectedPreviewDocId: Long? = null,
     val isProcessing: Boolean = false,
     val processingLabel: String = "",
-    val snackbarMessage: String? = null,
-    val showApiKeyDialog: Boolean = false
+    val snackbarMessage: String? = null
 )
 
 class StudyLeafViewModel(application: Application) : AndroidViewModel(application) {
@@ -150,7 +133,6 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
 
     private var activeAiJob: Job? = null
     private var activeEditorJob: Job? = null
-    private var nextChatId: Long = 1L
 
     val documents: StateFlow<List<DocumentEntity>> = repository.documents.stateIn(
         scope = viewModelScope,
@@ -182,68 +164,9 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
         initialValue = SortOrder.RECENT
     )
 
-    val userGeminiApiKey: StateFlow<String> = preferences.userGeminiApiKey.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.Eagerly,
-        initialValue = ""
-    )
-
-    val userGeminiModel: StateFlow<String> = preferences.userGeminiModel.stateIn(
-        scope = viewModelScope,
-        started = SharingStarted.Eagerly,
-        initialValue = PreferencesRepository.DEFAULT_GEMINI_MODEL
-    )
-
     init {
         viewModelScope.launch {
             repository.ensureSeeded()
-        }
-    }
-
-    fun openApiKeyDialog() {
-        _uiState.update { it.copy(showApiKeyDialog = true) }
-    }
-
-    fun closeApiKeyDialog() {
-        _uiState.update { it.copy(showApiKeyDialog = false) }
-    }
-
-    fun saveUserGeminiConfig(apiKey: String, modelName: String) {
-        viewModelScope.launch {
-            preferences.setUserGeminiApiKey(apiKey)
-            preferences.setUserGeminiModel(modelName)
-            _uiState.update {
-                it.copy(
-                    showApiKeyDialog = false,
-                    snackbarMessage = "Saved your Gemini API key locally on this device"
-                )
-            }
-        }
-    }
-
-    fun clearUserGeminiApiKey() {
-        viewModelScope.launch {
-            preferences.setUserGeminiApiKey("")
-            _uiState.update {
-                it.copy(
-                    showApiKeyDialog = false,
-                    snackbarMessage = "Removed saved Gemini API key"
-                )
-            }
-        }
-    }
-
-    fun testUserGeminiApiKey(
-        apiKey: String,
-        modelName: String,
-        onResult: (Boolean, String) -> Unit
-    ) {
-        viewModelScope.launch {
-            val result = aiEngine.verifyApiKey(apiKey, modelName)
-            result.fold(
-                onSuccess = { msg -> onResult(true, msg) },
-                onFailure = { err -> onResult(false, err.localizedMessage ?: "API key test failed") }
-            )
         }
     }
 
@@ -324,102 +247,40 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
             } else {
-                // Only run AI OCR automatically if the user has configured their own Gemini API key
-                if (userGeminiApiKey.value.isNotBlank()) {
-                    extractPdfWordsWithAi(doc, fallbackText = localText.ifBlank { doc.summarySnippet })
-                } else {
-                    _editorState.update { state ->
-                        state.copy(
-                            isLoading = false,
-                            isAiExtracting = false,
-                            extractedText = localText.ifBlank { doc.summarySnippet },
-                            extractionVersion = state.extractionVersion + 1,
-                            statusBanner = "Loaded local text. Tap AI Extract Text to connect your own Gemini API key for scanned-page OCR."
-                        )
-                    }
+                _editorState.update { state ->
+                    state.copy(
+                        isLoading = false,
+                        isAiExtracting = false,
+                        extractedText = localText.ifBlank { doc.summarySnippet },
+                        extractionVersion = state.extractionVersion + 1,
+                        statusBanner = "Loaded local text. Tap AI Extract Text to open this page in your Google Gemini account and paste the transcribed text."
+                    )
                 }
             }
         }
     }
 
     fun reExtractEditorTextWithAi(doc: DocumentEntity) {
-        if (userGeminiApiKey.value.isBlank()) {
-            openApiKeyDialog()
-            showMessage("Add your own Gemini API key to use AI text extraction")
-            return
-        }
         activeEditorJob?.cancel()
         activeEditorJob = viewModelScope.launch {
-            extractPdfWordsWithAi(doc, fallbackText = _editorState.value.extractedText.ifBlank { doc.summarySnippet })
-        }
-    }
-
-    private suspend fun extractPdfWordsWithAi(doc: DocumentEntity, fallbackText: String) {
-        val apiKey = userGeminiApiKey.value.trim()
-        val model = userGeminiModel.value
-        if (apiKey.isEmpty()) {
-            _editorState.update { state ->
-                state.copy(
-                    isLoading = false,
+            _editorState.update { it.copy(isAiExtracting = true) }
+            val prompt = aiEngine.buildOcrExtractPrompt(doc.title, pageNumber = 1)
+            val pageUri = renderPageToShareableUri(doc, pageIndex = 0)
+            val launched = aiEngine.shareToGeminiApp(
+                context = getApplication(),
+                fileUri = pageUri,
+                mimeType = "image/png",
+                prompt = prompt,
+                chooserTitle = "Transcribe Page in Google Gemini"
+            )
+            _editorState.update {
+                it.copy(
                     isAiExtracting = false,
-                    extractedText = fallbackText,
-                    extractionVersion = state.extractionVersion + 1,
-                    statusBanner = "Add your own Gemini API key to run AI OCR on scanned PDFs."
-                )
-            }
-            return
-        }
-        _editorState.update { it.copy(isLoading = true, isAiExtracting = true, statusBanner = null) }
-        try {
-            val pageCount = engine.getPdfPageCount(doc.filePath).coerceIn(1, 6)
-            val bitmaps = buildList {
-                for (i in 0 until pageCount) {
-                    engine.renderPdfPage(doc.filePath, i, targetWidthPx = 1200)?.let { add(it) }
-                }
-            }
-            val aiText = if (bitmaps.isNotEmpty()) {
-                withTimeout(60_000L) {
-                    aiEngine.extractEditableTextFromPages(
-                        apiKey = apiKey,
-                        modelName = model,
-                        pageBitmaps = bitmaps,
-                        documentTitle = doc.title
-                    )
-                }
-            } else ""
-            if (aiText.isNotBlank()) {
-                engine.saveEditableTextCache(File(doc.filePath), aiText)
-                _editorState.update { state ->
-                    state.copy(
-                        isLoading = false,
-                        isAiExtracting = false,
-                        extractedText = aiText,
-                        extractionVersion = state.extractionVersion + 1,
-                        statusBanner = "Extracted editable text from $pageCount PDF page(s). Edit any word below and tap Save."
-                    )
-                }
-            } else {
-                _editorState.update { state ->
-                    state.copy(
-                        isLoading = false,
-                        isAiExtracting = false,
-                        extractedText = fallbackText,
-                        extractionVersion = state.extractionVersion + 1,
-                        statusBanner = "Loaded document notes. Edit directly or tap AI Extract Text to retry."
-                    )
-                }
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e("StudyLeafEditor", "AI OCR extraction failed", e)
-            _editorState.update { state ->
-                state.copy(
-                    isLoading = false,
-                    isAiExtracting = false,
-                    extractedText = fallbackText,
-                    extractionVersion = state.extractionVersion + 1,
-                    statusBanner = "Offline/fallback text loaded (${e.localizedMessage ?: "AI unavailable"}). You can edit and save right away."
+                    statusBanner = if (launched) {
+                        "Sent page to your Google Gemini account & copied OCR prompt. Copy Gemini's reply and paste it below."
+                    } else {
+                        "Copied OCR prompt. Open Gemini to transcribe this page and paste the text below."
+                    }
                 )
             }
         }
@@ -431,30 +292,43 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
         editedText: String,
         targetFormat: DocumentFormat,
         overwriteOriginal: Boolean,
-        fontSizePt: Float
+        fontSizePt: Float,
+        textAlignment: Paint.Align = Paint.Align.LEFT
     ) {
         viewModelScope.launch {
             _uiState.update { it.copy(isProcessing = true, processingLabel = "Saving edited ${targetFormat.label}…") }
-            val saved = repository.saveEditedDocument(
-                source = source,
-                newTitle = newTitle,
-                editedText = editedText,
-                targetFormat = targetFormat,
-                overwriteOriginal = overwriteOriginal,
-                fontSizePt = fontSizePt
-            )
-            _uiState.update {
-                it.copy(
-                    isProcessing = false,
-                    processingLabel = "",
-                    selectedPreviewDocId = saved.id,
-                    overlay = StudyLeafOverlay.Reader(saved.id, saved),
-                    snackbarMessage = if (overwriteOriginal && targetFormat == source.format) {
-                        "Updated \"${saved.title}\""
-                    } else {
-                        "Saved \"${saved.title}\" (${targetFormat.label})"
-                    }
+            try {
+                val saved = repository.saveEditedDocument(
+                    source = source,
+                    newTitle = newTitle,
+                    editedText = editedText,
+                    targetFormat = targetFormat,
+                    overwriteOriginal = overwriteOriginal,
+                    fontSizePt = fontSizePt,
+                    textAlignment = textAlignment
                 )
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        selectedPreviewDocId = saved.id,
+                        overlay = StudyLeafOverlay.Reader(saved.id, saved),
+                        snackbarMessage = if (overwriteOriginal && targetFormat == source.format) {
+                            "Updated \"${saved.title}\""
+                        } else {
+                            "Saved \"${saved.title}\" (${targetFormat.label})"
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("StudyLeafVM", "Failed to save edited document", e)
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        snackbarMessage = e.message ?: "Could not save edited document"
+                    )
+                }
             }
         }
     }
@@ -462,217 +336,168 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
     fun openAiAssistant(docId: Long? = null, pageIndex: Int = 0) {
         activeAiJob?.cancel()
         val resolvedDocId = docId ?: _uiState.value.selectedPreviewDocId ?: documents.value.firstOrNull()?.id
-        _aiState.value = AiAssistantUiState()
+        val geminiInstalled = aiEngine.isGeminiAppInstalled(getApplication())
+        _aiState.value = AiAssistantUiState(isGeminiAppInstalled = geminiInstalled)
         _uiState.update {
             it.copy(overlay = StudyLeafOverlay.AiAssistant(resolvedDocId, pageIndex))
         }
+        preloadDocumentTextForGemini(resolvedDocId)
     }
 
     fun selectAiDocument(docId: Long) {
         activeAiJob?.cancel()
-        _aiState.value = AiAssistantUiState(activeMode = _aiState.value.activeMode)
+        _aiState.update {
+            it.copy(
+                extractedPreview = "",
+                lastCopiedPrompt = ""
+            )
+        }
         _uiState.update { state ->
             if (state.overlay is StudyLeafOverlay.AiAssistant) {
                 state.copy(overlay = StudyLeafOverlay.AiAssistant(docId, 0))
             } else state
         }
+        preloadDocumentTextForGemini(docId)
     }
 
     fun selectAiMode(mode: AiAssistantMode) {
         _aiState.update { it.copy(activeMode = mode) }
     }
 
-    fun runAiPageSummary() {
-        val overlay = _uiState.value.overlay as? StudyLeafOverlay.AiAssistant ?: return
-        val doc = documents.value.firstOrNull { it.id == overlay.documentId } ?: return
-        val apiKey = userGeminiApiKey.value.trim()
-        if (apiKey.isEmpty()) {
-            openApiKeyDialog()
-            _aiState.update {
-                it.copy(summaryState = AiSummaryState.Error("Add your own Gemini API key to summarize pages using your own Gemini quota."))
-            }
-            return
-        }
-        val model = userGeminiModel.value
-        activeAiJob?.cancel()
-        activeAiJob = viewModelScope.launch {
-            _aiState.update { it.copy(summaryState = AiSummaryState.Loading) }
-            val accumulated = StringBuilder()
-            try {
-                val pageBitmap = engine.renderPdfPage(doc.filePath, overlay.pageIndex, targetWidthPx = 1024)
-                withTimeout(60_000L) {
-                    aiEngine.summarizePageStream(
-                        apiKey = apiKey,
-                        modelName = model,
-                        pageBitmap = pageBitmap,
-                        documentTitle = doc.title,
-                        pageNumber = overlay.pageIndex + 1
-                    ).collect { chunk ->
-                        accumulated.append(chunk)
-                        _aiState.update { it.copy(summaryState = AiSummaryState.Streaming(accumulated.toString())) }
-                    }
-                }
-                if (accumulated.isNotBlank()) {
-                    _aiState.update { it.copy(summaryState = AiSummaryState.Success(accumulated.toString())) }
-                } else {
-                    _aiState.update { it.copy(summaryState = AiSummaryState.Error("Gemini returned an empty summary.")) }
-                }
-            } catch (e: TimeoutCancellationException) {
-                Log.e("StudyLeafAI", "Page summary timed out", e)
-                _aiState.update {
-                    it.copy(summaryState = AiSummaryState.Error("Summary request timed out after 60 seconds. Please try again."))
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e("StudyLeafAI", "Page summary failed", e)
-                _aiState.update {
-                    it.copy(summaryState = AiSummaryState.Error(e.localizedMessage ?: "Failed to summarize page."))
-                }
-            }
+    fun updateAiSavedReplyDraft(text: String) {
+        _aiState.update { it.copy(savedReplyDraft = text) }
+    }
+
+    fun pasteClipboardIntoAiReply() {
+        val pasted = aiEngine.readClipboardText(getApplication())
+        if (pasted.isNotBlank()) {
+            _aiState.update { it.copy(savedReplyDraft = pasted) }
+            showMessage("Pasted Gemini reply from clipboard")
+        } else {
+            showMessage("Clipboard is empty — copy a response from Gemini first")
         }
     }
 
-    fun runAiFlashcards() {
-        val overlay = _uiState.value.overlay as? StudyLeafOverlay.AiAssistant ?: return
-        val doc = documents.value.firstOrNull { it.id == overlay.documentId } ?: return
-        val apiKey = userGeminiApiKey.value.trim()
-        if (apiKey.isEmpty()) {
-            openApiKeyDialog()
-            _aiState.update {
-                it.copy(deckState = AiDeckState.Error("Add your own Gemini API key to generate flashcards using your own Gemini quota."))
-            }
-            return
-        }
-        val model = userGeminiModel.value
-        activeAiJob?.cancel()
+    private fun preloadDocumentTextForGemini(docId: Long?) {
+        val doc = documents.value.firstOrNull { it.id == docId } ?: return
         activeAiJob = viewModelScope.launch {
-            _aiState.update { it.copy(deckState = AiDeckState.Loading) }
-            try {
-                val pageBitmap = engine.renderPdfPage(doc.filePath, overlay.pageIndex, targetWidthPx = 1024)
-                val deck = withTimeout(60_000L) {
-                    aiEngine.generateStudyDeck(
-                        apiKey = apiKey,
-                        modelName = model,
-                        pageBitmap = pageBitmap,
-                        documentTitle = doc.title,
-                        pageNumber = overlay.pageIndex + 1
-                    )
-                }
-                _aiState.update { it.copy(deckState = AiDeckState.Success(deck)) }
-            } catch (e: TimeoutCancellationException) {
-                Log.e("StudyLeafAI", "Flashcard deck generation timed out", e)
-                _aiState.update {
-                    it.copy(deckState = AiDeckState.Error("Study deck generation timed out after 60 seconds. Please try again."))
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e("StudyLeafAI", "Flashcard deck generation failed", e)
-                _aiState.update {
-                    it.copy(deckState = AiDeckState.Error(e.localizedMessage ?: "Failed to generate flashcards."))
-                }
-            }
+            val extracted = engine.extractEditableText(doc.filePath)
+            _aiState.update { it.copy(extractedPreview = extracted) }
         }
     }
 
-    fun sendAiQuestion(question: String) {
-        val overlay = _uiState.value.overlay as? StudyLeafOverlay.AiAssistant ?: return
-        val doc = documents.value.firstOrNull { it.id == overlay.documentId } ?: return
-        val apiKey = userGeminiApiKey.value.trim()
-        if (apiKey.isEmpty()) {
-            openApiKeyDialog()
-            _aiState.update {
-                it.copy(chatError = "Add your own Gemini API key to chat with Gemini using your own quota.")
-            }
-            return
-        }
-        val model = userGeminiModel.value
-        activeAiJob?.cancel()
-
-        val prior = _aiState.value.chatMessages
-        val userMsg = AiChatMessage(id = nextChatId++, isUser = true, text = question)
-        val replyId = nextChatId++
-        val placeholderReply = AiChatMessage(id = replyId, isUser = false, text = "", isStreaming = true)
-
-        _aiState.update {
-            it.copy(
-                chatMessages = it.chatMessages + userMsg + placeholderReply,
-                isChatLoading = true,
-                chatError = null
+    fun openGeminiAccountInApp(
+        toolbarColorArgb: Int,
+        mode: AiAssistantMode? = null,
+        customQuestion: String = ""
+    ) {
+        val overlay = _uiState.value.overlay as? StudyLeafOverlay.AiAssistant
+        val doc = overlay?.documentId?.let { id -> documents.value.firstOrNull { it.id == id } }
+        val pageNum = (overlay?.pageIndex ?: 0) + 1
+        val prompt = if (doc != null && mode != null) {
+            buildPromptForMode(
+                doc = doc,
+                pageNumber = pageNum,
+                mode = mode,
+                customQuestion = customQuestion,
+                extractedText = _aiState.value.extractedPreview
             )
-        }
+        } else ""
 
-        activeAiJob = viewModelScope.launch {
-            val accumulated = StringBuilder()
-            try {
-                val pageBitmap = engine.renderPdfPage(doc.filePath, overlay.pageIndex, targetWidthPx = 1024)
-                withTimeout(60_000L) {
-                    aiEngine.askDocumentStream(
-                        apiKey = apiKey,
-                        modelName = model,
-                        pageBitmap = pageBitmap,
-                        documentTitle = doc.title,
-                        pageNumber = overlay.pageIndex + 1,
-                        priorMessages = prior,
-                        question = question
-                    ).collect { chunk ->
-                        accumulated.append(chunk)
-                        _aiState.update { state ->
-                            state.copy(
-                                chatMessages = state.chatMessages.map { m ->
-                                    if (m.id == replyId) m.copy(text = accumulated.toString(), isStreaming = true) else m
-                                }
-                            )
-                        }
-                    }
-                }
-                val finalText = accumulated.toString()
-                if (finalText.isBlank()) {
-                    _aiState.update { state ->
-                        state.copy(
-                            chatMessages = state.chatMessages.filterNot { it.id == replyId },
-                            isChatLoading = false,
-                            chatError = "Gemini returned an empty answer."
-                        )
-                    }
+        val launched = aiEngine.openGeminiInApp(
+            context = getApplication(),
+            prompt = prompt,
+            toolbarColorArgb = toolbarColorArgb
+        )
+        if (prompt.isNotBlank()) {
+            _aiState.update { it.copy(lastCopiedPrompt = prompt) }
+        }
+        if (launched) {
+            showMessage(
+                if (prompt.isNotBlank()) {
+                    "Prompt copied! Paste in Gemini to run on your own Google account"
                 } else {
-                    _aiState.update { state ->
-                        state.copy(
-                            chatMessages = state.chatMessages.map { m ->
-                                if (m.id == replyId) m.copy(text = finalText, isStreaming = false) else m
-                            },
-                            isChatLoading = false
-                        )
-                    }
+                    "Opened your Google Gemini account"
                 }
-            } catch (e: TimeoutCancellationException) {
-                Log.e("StudyLeafAI", "Chat question timed out", e)
-                _aiState.update { state ->
-                    state.copy(
-                        chatMessages = state.chatMessages.filterNot { it.id == replyId },
-                        isChatLoading = false,
-                        chatError = "Response timed out after 60 seconds. Please try again."
-                    )
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.e("StudyLeafAI", "Chat question failed", e)
-                _aiState.update { state ->
-                    state.copy(
-                        chatMessages = state.chatMessages.filterNot { it.id == replyId },
-                        isChatLoading = false,
-                        chatError = e.localizedMessage ?: "Failed to answer question."
-                    )
-                }
+            )
+        } else {
+            showMessage("Could not open browser for Google Gemini")
+        }
+    }
+
+    fun sharePageToGeminiApp(
+        mode: AiAssistantMode,
+        customQuestion: String = ""
+    ) {
+        val overlay = _uiState.value.overlay as? StudyLeafOverlay.AiAssistant ?: return
+        val doc = documents.value.firstOrNull { it.id == overlay.documentId } ?: return
+        viewModelScope.launch {
+            _aiState.update { it.copy(isPreparingShare = true) }
+            val prompt = buildPromptForMode(
+                doc = doc,
+                pageNumber = overlay.pageIndex + 1,
+                mode = mode,
+                customQuestion = customQuestion,
+                extractedText = _aiState.value.extractedPreview
+            )
+            val pageUri = renderPageToShareableUri(doc, overlay.pageIndex)
+            val launched = aiEngine.shareToGeminiApp(
+                context = getApplication(),
+                fileUri = pageUri,
+                mimeType = "image/png",
+                prompt = prompt,
+                chooserTitle = "Ask Google Gemini"
+            )
+            _aiState.update {
+                it.copy(
+                    isPreparingShare = false,
+                    lastCopiedPrompt = prompt
+                )
+            }
+            if (launched) {
+                showMessage("Shared page & copied prompt to your Google Gemini app")
+            } else {
+                showMessage("No compatible app found to share this page")
             }
         }
     }
+
+    private fun buildPromptForMode(
+        doc: DocumentEntity,
+        pageNumber: Int,
+        mode: AiAssistantMode,
+        customQuestion: String,
+        extractedText: String
+    ): String = when (mode) {
+        AiAssistantMode.SUMMARIZE -> aiEngine.buildSummaryPrompt(doc.title, pageNumber, extractedText)
+        AiAssistantMode.FLASHCARDS -> aiEngine.buildFlashcardsPrompt(doc.title, pageNumber, extractedText)
+        AiAssistantMode.ASK -> {
+            val q = customQuestion.ifBlank { "Explain the key ideas on this page clearly." }
+            aiEngine.buildQuestionPrompt(doc.title, pageNumber, q, extractedText)
+        }
+    }
+
+    private suspend fun renderPageToShareableUri(doc: DocumentEntity, pageIndex: Int): Uri? =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val bitmap = engine.renderPdfPage(doc.filePath, pageIndex, targetWidthPx = 1440) ?: return@runCatching null
+                val app = getApplication<Application>()
+                val shareDir = File(app.cacheDir, "shared_pages").apply { mkdirs() }
+                val outFile = File(shareDir, "studyleaf_${doc.id}_p${pageIndex + 1}.png")
+                FileOutputStream(outFile).use { fos ->
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 95, fos)
+                }
+                FileProvider.getUriForFile(app, "${app.packageName}.fileprovider", outFile)
+            }.onFailure { err ->
+                Log.e("StudyLeafGemini", "Failed to render page for Gemini share", err)
+            }.getOrNull()
+        }
 
     fun pinAiSummaryAsStickyNote(noteText: String) {
         val overlay = _uiState.value.overlay as? StudyLeafOverlay.AiAssistant ?: return
         val docId = overlay.documentId ?: return
+        val cleaned = noteText.trim()
+        if (cleaned.isEmpty()) return
         viewModelScope.launch {
             repository.addAnnotation(
                 PageAnnotation(
@@ -681,10 +506,10 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
                     tool = AnnotationTool.NOTE,
                     colorHex = 0xFF74C69D,
                     points = listOf(NormalizedPoint(0.82f, 0.18f)),
-                    noteText = noteText
+                    noteText = cleaned.take(320)
                 )
             )
-            showMessage("Pinned AI summary as sticky note on page ${overlay.pageIndex + 1}")
+            showMessage("Pinned Gemini notes as sticky note on page ${overlay.pageIndex + 1}")
         }
     }
 
@@ -940,19 +765,30 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
     fun runOptimizePdf(source: DocumentEntity, qualityScale: Float, outputTitle: String) {
         viewModelScope.launch {
             _uiState.update { it.copy(isProcessing = true, processingLabel = "Optimizing PDF size…") }
-            val doc = repository.optimizeDocument(
-                source = source,
-                qualityScale = qualityScale,
-                outputTitle = outputTitle.ifBlank { "${source.title} (Compact)" }
-            )
-            _uiState.update {
-                it.copy(
-                    isProcessing = false,
-                    processingLabel = "",
-                    selectedPreviewDocId = doc.id,
-                    overlay = StudyLeafOverlay.Reader(doc.id),
-                    snackbarMessage = "Optimized \"${doc.title}\" saved locally"
+            try {
+                val doc = repository.optimizeDocument(
+                    source = source,
+                    qualityScale = qualityScale,
+                    outputTitle = outputTitle.ifBlank { "${source.title} (Compact)" }
                 )
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        selectedPreviewDocId = doc.id,
+                        overlay = StudyLeafOverlay.Reader(doc.id, doc),
+                        snackbarMessage = "Optimized \"${doc.title}\" saved locally"
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("StudyLeafVM", "Optimize PDF failed", e)
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        snackbarMessage = e.message ?: "Could not optimize this PDF"
+                    )
+                }
             }
         }
     }
@@ -978,42 +814,7 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             _uiState.update { it.copy(isProcessing = true, processingLabel = "Converting PDF to editable Word (.docx)…") }
             val localText = engine.extractEditableText(source.filePath)
-            val apiKey = userGeminiApiKey.value.trim()
-            val resolvedText = if (localText.length >= 24) {
-                localText
-            } else if (apiKey.isNotEmpty()) {
-                try {
-                    val pageCount = engine.getPdfPageCount(source.filePath).coerceIn(1, 6)
-                    val bitmaps = buildList {
-                        for (i in 0 until pageCount) {
-                            engine.renderPdfPage(source.filePath, i, targetWidthPx = 1200)?.let { add(it) }
-                        }
-                    }
-                    val aiText = if (bitmaps.isNotEmpty()) {
-                        withTimeout(60_000L) {
-                            aiEngine.extractEditableTextFromPages(
-                                apiKey = apiKey,
-                                modelName = userGeminiModel.value,
-                                pageBitmaps = bitmaps,
-                                documentTitle = source.title
-                            )
-                        }
-                    } else ""
-                    if (aiText.isNotBlank()) {
-                        engine.saveEditableTextCache(File(source.filePath), aiText)
-                        aiText
-                    } else {
-                        localText.ifBlank { source.summarySnippet }
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Log.e("StudyLeafConvert", "AI OCR fallback failed during PDF to Word", e)
-                    localText.ifBlank { source.summarySnippet }
-                }
-            } else {
-                localText.ifBlank { source.summarySnippet }
-            }
+            val resolvedText = localText.ifBlank { source.summarySnippet }
             val finalTitle = outputTitle.trim().ifBlank { "${source.title} (Word)" }
             val doc = repository.saveEditedDocument(
                 source = source,

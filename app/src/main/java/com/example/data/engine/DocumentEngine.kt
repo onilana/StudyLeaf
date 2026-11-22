@@ -25,7 +25,6 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
-import java.util.zip.Inflater
 import java.util.zip.ZipInputStream
 import kotlin.math.max
 import kotlin.math.min
@@ -252,34 +251,95 @@ class DocumentEngine(private val context: Context) {
         qualityScale: Float,
         outputTitle: String
     ): GeneratedFileInfo = withContext(Dispatchers.IO) {
-        val outFile = File(documentsDir, safeFileName(outputTitle, "pdf"))
         val srcFile = File(sourcePath)
+        if (!srcFile.exists()) {
+            throw IllegalStateException("Source PDF file could not be found on this device.")
+        }
+        val outFile = File(documentsDir, safeFileName(outputTitle, "pdf"))
         val pdfDoc = PdfDocument()
         var written = 0
         val renderScale = qualityScale.coerceIn(0.6f, 1.5f)
+        val jpegQuality = when {
+            renderScale <= 0.8f -> 56
+            renderScale <= 1.1f -> 72
+            else -> 86
+        }
+        val drawPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+
+        fun writeBitmapPage(sourceBmp: Bitmap) {
+            val w = 595
+            val h = max(400, (w * sourceBmp.height.toFloat() / max(1, sourceBmp.width)).roundToInt())
+            // Compress through JPEG so Skia's PDF backend embeds a compact image stream
+            val jpegStream = ByteArrayOutputStream()
+            sourceBmp.compress(Bitmap.CompressFormat.JPEG, jpegQuality, jpegStream)
+            val jpegBytes = jpegStream.toByteArray()
+            val compactBmp = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
+            val bmpToDraw = compactBmp ?: sourceBmp
+            try {
+                val info = PdfDocument.PageInfo.Builder(w, h, written + 1).create()
+                val outPage = pdfDoc.startPage(info)
+                outPage.canvas.drawColor(Color.WHITE)
+                outPage.canvas.drawBitmap(bmpToDraw, null, Rect(0, 0, w, h), drawPaint)
+                pdfDoc.finishPage(outPage)
+                written++
+            } finally {
+                if (compactBmp != null && compactBmp !== sourceBmp && !compactBmp.isRecycled) {
+                    compactBmp.recycle()
+                }
+            }
+        }
+
         try {
-            ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                PdfRenderer(pfd).use { renderer ->
-                    for (i in 0 until renderer.pageCount) {
-                        renderer.openPage(i).use { page ->
-                            val w = 595
-                            val h = max(400, (w * page.height.toFloat() / max(1, page.width)).roundToInt())
-                            val bmpW = (w * renderScale).roundToInt().coerceAtLeast(320)
-                            val bmpH = (h * renderScale).roundToInt().coerceAtLeast(420)
-                            val bmp = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.RGB_565)
-                            Canvas(bmp).drawColor(Color.WHITE)
-                            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                            val info = PdfDocument.PageInfo.Builder(w, h, written + 1).create()
-                            val outPage = pdfDoc.startPage(info)
-                            outPage.canvas.drawBitmap(bmp, null, Rect(0, 0, w, h), Paint(Paint.FILTER_BITMAP_FLAG))
-                            pdfDoc.finishPage(outPage)
-                            bmp.recycle()
-                            written++
+            if (srcFile.name.lowercase().endsWith(".pdf")) {
+                ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                    PdfRenderer(pfd).use { renderer ->
+                        for (i in 0 until renderer.pageCount) {
+                            renderer.openPage(i).use { page ->
+                                val w = 595
+                                val h = max(400, (w * page.height.toFloat() / max(1, page.width)).roundToInt())
+                                val bmpW = (w * renderScale).roundToInt().coerceIn(280, 1240)
+                                val bmpH = (h * renderScale).roundToInt().coerceIn(360, 1754)
+                                // PdfRenderer.Page.render strictly requires ARGB_8888 (RGB_565 throws IllegalArgumentException)
+                                val renderBmp = Bitmap.createBitmap(bmpW, bmpH, Bitmap.Config.ARGB_8888)
+                                try {
+                                    Canvas(renderBmp).drawColor(Color.WHITE)
+                                    page.render(renderBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                    writeBitmapPage(renderBmp)
+                                } finally {
+                                    if (!renderBmp.isRecycled) renderBmp.recycle()
+                                }
+                            }
                         }
                     }
                 }
+            } else {
+                val bmp = decodeScaledBitmap(sourcePath, (595 * renderScale).roundToInt().coerceIn(360, 1240))
+                if (bmp != null) {
+                    try {
+                        writeBitmapPage(bmp)
+                    } finally {
+                        if (!bmp.isRecycled) bmp.recycle()
+                    }
+                }
             }
+
+            if (written == 0) {
+                throw IllegalStateException("This PDF has no renderable pages or is password-protected.")
+            }
+
             FileOutputStream(outFile).use { pdfDoc.writeTo(it) }
+
+            // Preserve any editable text cache so the optimized copy remains cleanly editable
+            val existingSidecar = sidecarTextFile(srcFile)
+            if (existingSidecar.exists()) {
+                runCatching {
+                    val cached = existingSidecar.readText(Charsets.UTF_8)
+                    if (cached.isNotBlank()) saveEditableTextCache(outFile, cached)
+                }
+            }
+        } catch (e: Exception) {
+            runCatching { if (outFile.exists()) outFile.delete() }
+            throw e
         } finally {
             pdfDoc.close()
         }
@@ -327,7 +387,8 @@ class DocumentEngine(private val context: Context) {
         title: String,
         bodyText: String,
         fontSizePt: Float = 13f,
-        marginPt: Int = 44
+        marginPt: Int = 44,
+        textAlignment: Paint.Align = Paint.Align.LEFT
     ): GeneratedFileInfo = withContext(Dispatchers.IO) {
         val outFile = File(documentsDir, safeFileName(title, "pdf"))
         val pdfDoc = PdfDocument()
@@ -349,18 +410,25 @@ class DocumentEngine(private val context: Context) {
             color = Color.parseColor("#1A1C1E")
             textSize = fontSizePt
             typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+            textAlign = textAlignment
         }
         val dividerPaint = Paint().apply {
             color = Color.parseColor("#C1C8C2")
             strokeWidth = 1f
         }
 
+        val bodyDrawX = when (textAlignment) {
+            Paint.Align.CENTER -> pageW / 2f
+            Paint.Align.RIGHT -> (pageW - marginPt).toFloat()
+            else -> marginPt.toFloat()
+        }
+
         val wrappedLines = mutableListOf<String>()
-        bodyText.split("\n").forEach { paragraph ->
+        bodyText.replace("\r\n", "\n").split("\n").forEach { paragraph ->
             if (paragraph.isBlank()) {
                 wrappedLines.add("")
             } else {
-                val words = paragraph.split(Regex("\\s+"))
+                val words = paragraph.trim().split(Regex("\\s+"))
                 var current = StringBuilder()
                 for (word in words) {
                     val candidate = if (current.isEmpty()) word else "$current $word"
@@ -368,7 +436,23 @@ class DocumentEngine(private val context: Context) {
                         current = StringBuilder(candidate)
                     } else {
                         if (current.isNotEmpty()) wrappedLines.add(current.toString())
-                        current = StringBuilder(word)
+                        // Break extraordinarily long single tokens (e.g. URLs) so they never overflow
+                        if (bodyPaint.measureText(word) > contentW) {
+                            var start = 0
+                            while (start < word.length) {
+                                val fitCount = bodyPaint.breakText(word, start, word.length, true, contentW, null)
+                                    .coerceAtLeast(1)
+                                val slice = word.substring(start, start + fitCount)
+                                start += fitCount
+                                if (start < word.length) {
+                                    wrappedLines.add(slice)
+                                } else {
+                                    current = StringBuilder(slice)
+                                }
+                            }
+                        } else {
+                            current = StringBuilder(word)
+                        }
                     }
                 }
                 if (current.isNotEmpty()) wrappedLines.add(current.toString())
@@ -402,7 +486,7 @@ class DocumentEngine(private val context: Context) {
                 while (lineIdx < wrappedLines.size && y <= maxY) {
                     val line = wrappedLines[lineIdx]
                     if (line.isNotEmpty()) {
-                        canvas.drawText(line, marginPt.toFloat(), y, bodyPaint)
+                        canvas.drawText(line, bodyDrawX, y, bodyPaint)
                     }
                     y += lineSpacing
                     lineIdx++
@@ -463,189 +547,7 @@ class DocumentEngine(private val context: Context) {
     }
 
     private fun extractPdfTextOnDevice(file: File): String {
-        return try {
-            val bytes = file.readBytes()
-            val latin = String(bytes, Charsets.ISO_8859_1)
-            val extractedChunks = mutableListOf<String>()
-
-            var searchPos = 0
-            while (searchPos < latin.length) {
-                val streamStartToken = latin.indexOf("stream", searchPos)
-                if (streamStartToken < 0) break
-                val dictStart = max(0, streamStartToken - 256)
-                val dictSlice = latin.substring(dictStart, streamStartToken)
-                val isFlate = dictSlice.contains("/FlateDecode")
-
-                var dataStart = streamStartToken + 6
-                if (dataStart < bytes.size && bytes[dataStart] == '\r'.code.toByte()) dataStart++
-                if (dataStart < bytes.size && bytes[dataStart] == '\n'.code.toByte()) dataStart++
-
-                val endStreamIdx = latin.indexOf("endstream", dataStart)
-                if (endStreamIdx < 0) break
-
-                val streamLength = (endStreamIdx - dataStart).coerceAtLeast(0)
-                if (streamLength in 1..(4 * 1024 * 1024)) {
-                    val rawSlice = bytes.copyOfRange(dataStart, endStreamIdx)
-                    val decoded = if (isFlate) inflateStreamBytes(rawSlice) else rawSlice
-                    if (decoded != null) {
-                        val contentStr = String(decoded, Charsets.ISO_8859_1)
-                        if (contentStr.contains("BT") && (contentStr.contains("Tj") || contentStr.contains("TJ"))) {
-                            val blockText = parsePdfTextOperators(contentStr)
-                            if (blockText.isNotBlank()) {
-                                extractedChunks.add(blockText)
-                            }
-                        }
-                    }
-                }
-                searchPos = endStreamIdx + 9
-            }
-
-            extractedChunks
-                .joinToString("\n\n")
-                .replace(Regex("[ \\t]+"), " ")
-                .replace(Regex("\\n{3,}"), "\n\n")
-                .trim()
-        } catch (_: Exception) {
-            ""
-        }
-    }
-
-    private fun inflateStreamBytes(compressed: ByteArray): ByteArray? {
-        val inflater = Inflater()
-        return try {
-            inflater.setInput(compressed)
-            val out = ByteArrayOutputStream()
-            val buf = ByteArray(4096)
-            var guard = 0
-            while (!inflater.finished() && guard < 2048) {
-                val count = inflater.inflate(buf)
-                if (count <= 0) {
-                    if (inflater.needsInput() || inflater.needsDictionary()) break
-                } else {
-                    out.write(buf, 0, count)
-                }
-                guard++
-            }
-            if (out.size() > 0) out.toByteArray() else null
-        } catch (_: Exception) {
-            null
-        } finally {
-            inflater.end()
-        }
-    }
-
-    private fun parsePdfTextOperators(stream: String): String {
-        val sb = StringBuilder()
-        val btRegex = Regex("BT(.*?)ET", RegexOption.DOT_MATCHES_ALL)
-        btRegex.findAll(stream).forEach { match ->
-            val block = match.groupValues[1]
-            val lineOut = StringBuilder()
-            var i = 0
-            while (i < block.length) {
-                when (block[i]) {
-                    '(' -> {
-                        val (literal, nextIdx) = readPdfLiteralString(block, i)
-                        if (literal.isNotEmpty()) lineOut.append(literal)
-                        i = nextIdx
-                    }
-                    '<' -> {
-                        if (i + 1 < block.length && block[i + 1] != '<') {
-                            val close = block.indexOf('>', i + 1)
-                            if (close > i + 1) {
-                                val hexText = decodePdfHexString(block.substring(i + 1, close))
-                                if (hexText.isNotEmpty()) lineOut.append(hexText)
-                                i = close + 1
-                            } else {
-                                i++
-                            }
-                        } else {
-                            i += 2
-                        }
-                    }
-                    'T' -> {
-                        if (i + 1 < block.length && (block[i + 1] == 'd' || block[i + 1] == 'D' || block[i + 1] == '*')) {
-                            if (lineOut.isNotEmpty() && !lineOut.endsWith("\n")) {
-                                lineOut.append('\n')
-                            }
-                            i += 2
-                        } else {
-                            i++
-                        }
-                    }
-                    else -> i++
-                }
-            }
-            val cleaned = lineOut.toString()
-                .filter { ch -> ch == '\n' || ch == '\t' || ch.code in 32..126 || ch.code in 160..65533 }
-                .trim()
-            val readableRatio = if (cleaned.isEmpty()) 0f else {
-                cleaned.count { it.isLetterOrDigit() || it.isWhitespace() || it in ".,;:!?'-()[]/%&@#\"+" }.toFloat() / cleaned.length
-            }
-            if (cleaned.length >= 2 && readableRatio >= 0.72f) {
-                if (sb.isNotEmpty()) sb.append('\n')
-                sb.append(cleaned)
-            }
-        }
-        return sb.toString()
-    }
-
-    private fun readPdfLiteralString(src: String, openParenIndex: Int): Pair<String, Int> {
-        val sb = StringBuilder()
-        var i = openParenIndex + 1
-        var depth = 1
-        while (i < src.length && depth > 0) {
-            val c = src[i]
-            if (c == '\\' && i + 1 < src.length) {
-                val next = src[i + 1]
-                when (next) {
-                    'n' -> { sb.append('\n'); i += 2 }
-                    'r' -> { sb.append('\n'); i += 2 }
-                    't' -> { sb.append('\t'); i += 2 }
-                    '(', ')', '\\' -> { sb.append(next); i += 2 }
-                    in '0'..'7' -> {
-                        var oct = ""
-                        var k = i + 1
-                        while (k < src.length && oct.length < 3 && src[k] in '0'..'7') {
-                            oct += src[k]
-                            k++
-                        }
-                        val code = oct.toIntOrNull(8)
-                        if (code != null && code in 32..126) sb.append(code.toChar())
-                        i = k
-                    }
-                    else -> { sb.append(next); i += 2 }
-                }
-            } else if (c == '(') {
-                depth++
-                sb.append(c)
-                i++
-            } else if (c == ')') {
-                depth--
-                if (depth > 0) sb.append(c)
-                i++
-            } else {
-                sb.append(c)
-                i++
-            }
-        }
-        return sb.toString() to i
-    }
-
-    private fun decodePdfHexString(hexRaw: String): String {
-        val hex = hexRaw.filter { !it.isWhitespace() }
-        if (hex.length < 2 || hex.length % 2 != 0) return ""
-        val bytes = ByteArray(hex.length / 2)
-        for (idx in bytes.indices) {
-            val value = hex.substring(idx * 2, idx * 2 + 2).toIntOrNull(16) ?: return ""
-            bytes[idx] = value.toByte()
-        }
-        val decoded = if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
-            String(bytes, 2, bytes.size - 2, Charsets.UTF_16BE)
-        } else {
-            String(bytes, Charsets.ISO_8859_1)
-        }
-        val printable = decoded.count { it.isLetterOrDigit() || it == ' ' || it in ".,;:!?'-()/" }
-        return if (decoded.isNotEmpty() && printable.toFloat() / decoded.length >= 0.75f) decoded else ""
+        return PdfTextExtractor.extractText(file)
     }
 
     suspend fun pdfToPngImages(
