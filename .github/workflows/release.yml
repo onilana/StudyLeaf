@@ -1,17 +1,24 @@
 name: Build & Publish StudyLeaf Release
 
 on:
+  release:
+    types: [published]
   push:
     tags:
       - "v*"
+      - "[0-9]+.[0-9]+*"
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: studyleaf-release-${{ github.event.release.tag_name || github.ref_name }}
+  cancel-in-progress: true
+
 jobs:
   build-release:
-    name: Build Signed APK & AAB
+    name: Build StudyLeaf APK & AAB
     runs-on: ubuntu-latest
 
     steps:
@@ -24,48 +31,82 @@ jobs:
           distribution: temurin
           java-version: 21
 
+      - name: Accept Android SDK licenses
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          if [ -n "$SDK_ROOT" ]; then
+            SDKMANAGER=$(find "$SDK_ROOT/cmdline-tools" -name sdkmanager 2>/dev/null | head -n 1 || true)
+            if [ -n "$SDKMANAGER" ]; then
+              yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+            fi
+          fi
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.3.1
 
-      - name: Decode Release Keystore
+      - name: Prepare Keystores
+        id: signing
         env:
           RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          if [ -z "$RELEASE_KEYSTORE_BASE64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ]; then
-            echo "::error::Missing required signing secrets. Add RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, and KEY_PASSWORD in Settings -> Secrets and variables -> Actions."
-            exit 1
+          if [ -f "debug.keystore.base64" ] && [ ! -f "debug.keystore" ]; then
+            tr -d '[:space:]' < debug.keystore.base64 | base64 -d > debug.keystore
           fi
-          echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > "${{ runner.temp }}/my-upload-key.jks"
+
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_PASSWORD" ]; then
+            printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "${{ runner.temp }}/my-upload-key.jks"
+            echo "mode=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Release signing secrets (RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, KEY_PASSWORD) are not configured in Settings -> Secrets and variables -> Actions. Falling back to building an installable debug APK."
+            echo "mode=debug" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Build Signed Release APK & AAB
+        if: steps.signing.outputs.mode == 'release'
         env:
           KEYSTORE_PATH: ${{ runner.temp }}/my-upload-key.jks
           STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: gradle :app:assembleRelease :app:bundleRelease --stacktrace
 
+      - name: Build Installable Debug APK (Fallback)
+        if: steps.signing.outputs.mode == 'debug'
+        run: gradle :app:assembleDebug --stacktrace
+
       - name: Clean up temporary keystore
         if: always()
         run: rm -f "${{ runner.temp }}/my-upload-key.jks"
 
-      - name: Upload Release Artifacts
+      - name: Stage Release Files
+        id: stage
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name || github.ref_name }}
+        run: |
+          SAFE_TAG=$(printf '%s' "$TAG_NAME" | tr '/ ' '__')
+          mkdir -p release_dist
+          if [ "${{ steps.signing.outputs.mode }}" = "release" ]; then
+            cp app/build/outputs/apk/release/app-release.apk "release_dist/StudyLeaf-${SAFE_TAG}-release.apk"
+            cp app/build/outputs/bundle/release/app-release.aab "release_dist/StudyLeaf-${SAFE_TAG}-release.aab"
+          else
+            cp app/build/outputs/apk/debug/app-debug.apk "release_dist/StudyLeaf-${SAFE_TAG}-debug.apk"
+          fi
+          ls -lh release_dist
+
+      - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: studyleaf-release-${{ github.ref_name }}
-          path: |
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/bundle/release/app-release.aab
+          name: studyleaf-${{ github.event.release.tag_name || github.ref_name }}
+          path: release_dist/*
           if-no-files-found: error
 
-      - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+      - name: Attach Files to GitHub Release
+        if: github.event_name == 'release' || startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name || github.ref_name }}
           generate_release_notes: true
-          files: |
-            app/build/outputs/apk/release/app-release.apk
-            app/build/outputs/bundle/release/app-release.aab
+          files: release_dist/*
