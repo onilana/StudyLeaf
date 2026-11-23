@@ -41,7 +41,7 @@ googleServices = "4.5.0"
 credentials = "1.5.0"
 googleid = "1.1.1"
 playAppUpdate = "2.1.0"
-fragment = "1.8.6"
+fragment = "1.8.9"
 
 
 [libraries]
