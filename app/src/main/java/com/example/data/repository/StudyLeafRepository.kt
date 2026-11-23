@@ -5,7 +5,11 @@ import android.graphics.Bitmap
 import android.graphics.Paint
 import android.net.Uri
 import com.example.data.engine.DocumentEngine
+import com.example.data.engine.PdfPageSpec
+import com.example.data.engine.PdfRedactionOverlay
 import com.example.data.engine.PdfSeedGenerator
+import com.example.data.engine.PdfSignatureOverlay
+import com.example.data.engine.PdfTextOverlayEdit
 import com.example.data.local.AnnotationEntity
 import com.example.data.local.ConversionHistoryEntity
 import com.example.data.local.DocumentEntity
@@ -307,10 +311,16 @@ class StudyLeafRepository(
     suspend fun reorderDocumentPages(
         source: DocumentEntity,
         orderedZeroBasedPages: List<Int>,
-        outputTitle: String
+        outputTitle: String,
+        pageSpecs: List<PdfPageSpec>? = null
     ): DocumentEntity {
         val start = System.currentTimeMillis()
-        val info = engine.reorderAndExtractPdf(source.filePath, orderedZeroBasedPages, outputTitle)
+        val info = engine.reorderAndExtractPdf(
+            sourcePath = source.filePath,
+            orderedZeroBasedPages = orderedZeroBasedPages,
+            outputTitle = outputTitle,
+            pageSpecs = pageSpecs
+        )
         val duration = (System.currentTimeMillis() - start).coerceAtLeast(100L)
         val now = System.currentTimeMillis()
         val doc = DocumentEntity(
@@ -642,6 +652,155 @@ class StudyLeafRepository(
                 resultDocumentId = savedDoc.id,
                 sourceFormatName = source.formatName,
                 targetFormatName = targetFormat.name,
+                pageCount = info.pageCount,
+                fileSizeBytes = info.sizeBytes,
+                durationMs = duration
+            )
+        )
+        return savedDoc
+    }
+
+    suspend fun saveVisualEditedPdf(
+        source: DocumentEntity,
+        newTitle: String,
+        edits: List<PdfTextOverlayEdit>,
+        signatures: List<PdfSignatureOverlay> = emptyList(),
+        redactions: List<PdfRedactionOverlay> = emptyList(),
+        sanitizeMetadata: Boolean = false,
+        overwriteOriginal: Boolean
+    ): DocumentEntity {
+        val start = System.currentTimeMillis()
+        val resolvedTitle = newTitle.trim().ifBlank { source.title }
+        val info = engine.applyVisualEditsToPdf(
+            sourcePath = source.filePath,
+            edits = edits,
+            signatures = signatures,
+            redactions = redactions,
+            sanitizeMetadata = sanitizeMetadata,
+            outputTitle = resolvedTitle
+        )
+        val duration = (System.currentTimeMillis() - start).coerceAtLeast(80L)
+        val now = System.currentTimeMillis()
+        val summaryParts = buildList {
+            if (edits.isNotEmpty()) add("${edits.size} text edit(s)")
+            if (signatures.isNotEmpty()) add("${signatures.size} signature(s)")
+            if (redactions.isNotEmpty()) add("${redactions.size} permanent redaction(s)")
+            if (sanitizeMetadata) add("metadata stripped")
+        }
+        val editCountLabel = if (summaryParts.isEmpty()) {
+            "Original layout & images preserved."
+        } else {
+            "Saved with ${summaryParts.joinToString(", ")}."
+        }
+
+        val savedDoc = if (overwriteOriginal && (source.format == DocumentFormat.PDF || source.format == DocumentFormat.SCAN)) {
+            val oldFile = File(source.filePath)
+            val updated = source.copy(
+                title = resolvedTitle,
+                filePath = info.file.absolutePath,
+                sizeBytes = info.sizeBytes,
+                pageCount = info.pageCount,
+                summarySnippet = editCountLabel,
+                lastOpenedAt = now
+            )
+            documentDao.update(updated)
+            if (oldFile.exists() && oldFile.absolutePath != info.file.absolutePath) {
+                runCatching { oldFile.delete() }
+            }
+            updated
+        } else {
+            val created = DocumentEntity(
+                title = resolvedTitle,
+                filePath = info.file.absolutePath,
+                formatName = DocumentFormat.PDF.name,
+                sizeBytes = info.sizeBytes,
+                pageCount = info.pageCount,
+                folderName = if (overwriteOriginal) source.folderName else "Edited",
+                isFavorite = source.isFavorite,
+                summarySnippet = editCountLabel,
+                lastOpenedAt = now,
+                createdAt = now
+            )
+            val id = documentDao.insert(created)
+            created.copy(id = id)
+        }
+
+        historyDao.insert(
+            ConversionHistoryEntity(
+                toolTypeName = ConversionToolType.WORD_TO_PDF.name,
+                sourceTitle = source.title,
+                resultTitle = resolvedTitle,
+                resultDocumentId = savedDoc.id,
+                sourceFormatName = source.formatName,
+                targetFormatName = DocumentFormat.PDF.name,
+                pageCount = info.pageCount,
+                fileSizeBytes = info.sizeBytes,
+                durationMs = duration
+            )
+        )
+        return savedDoc
+    }
+
+    suspend fun savePreservedDocxDocument(
+        source: DocumentEntity,
+        newTitle: String,
+        editedParagraphsByIndex: Map<Int, String>,
+        previewBodyText: String,
+        overwriteOriginal: Boolean
+    ): DocumentEntity {
+        val start = System.currentTimeMillis()
+        val resolvedTitle = newTitle.trim().ifBlank { source.title }
+        val info = engine.saveEditedDocxPreservingFormat(
+            sourcePath = source.filePath,
+            title = resolvedTitle,
+            editedParagraphsByIndex = editedParagraphsByIndex,
+            fallbackBodyText = previewBodyText
+        )
+        val duration = (System.currentTimeMillis() - start).coerceAtLeast(80L)
+        val now = System.currentTimeMillis()
+        val snippet = previewBodyText.trim().replace(Regex("\\s+"), " ").take(96)
+            .ifBlank { "Edited Word document preserving original images & formatting." }
+
+        val savedDoc = if (overwriteOriginal && source.format == DocumentFormat.WORD) {
+            val oldFile = File(source.filePath)
+            val updated = source.copy(
+                title = resolvedTitle,
+                filePath = info.file.absolutePath,
+                sizeBytes = info.sizeBytes,
+                pageCount = info.pageCount,
+                summarySnippet = snippet,
+                lastOpenedAt = now
+            )
+            documentDao.update(updated)
+            if (oldFile.exists() && oldFile.absolutePath != info.file.absolutePath) {
+                runCatching { oldFile.delete() }
+            }
+            updated
+        } else {
+            val created = DocumentEntity(
+                title = resolvedTitle,
+                filePath = info.file.absolutePath,
+                formatName = DocumentFormat.WORD.name,
+                sizeBytes = info.sizeBytes,
+                pageCount = info.pageCount,
+                folderName = if (overwriteOriginal) source.folderName else "Edited",
+                isFavorite = source.isFavorite,
+                summarySnippet = snippet,
+                lastOpenedAt = now,
+                createdAt = now
+            )
+            val id = documentDao.insert(created)
+            created.copy(id = id)
+        }
+
+        historyDao.insert(
+            ConversionHistoryEntity(
+                toolTypeName = ConversionToolType.WORD_TO_PDF.name,
+                sourceTitle = source.title,
+                resultTitle = resolvedTitle,
+                resultDocumentId = savedDoc.id,
+                sourceFormatName = source.formatName,
+                targetFormatName = DocumentFormat.WORD.name,
                 pageCount = info.pageCount,
                 fileSizeBytes = info.sizeBytes,
                 durationMs = duration

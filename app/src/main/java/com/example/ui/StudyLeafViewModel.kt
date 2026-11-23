@@ -11,6 +11,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.StudyLeafAiEngine
 import com.example.data.engine.DocumentEngine
+import com.example.data.engine.DocxParsedDocument
+import com.example.data.engine.PdfEditableTextLine
+import com.example.data.engine.PdfPageSpec
+import com.example.data.engine.PdfRedactionOverlay
+import com.example.data.engine.PdfSignatureOverlay
+import com.example.data.engine.PdfTextOverlayEdit
 import com.example.data.local.ConversionHistoryEntity
 import com.example.data.local.DocumentEntity
 import com.example.data.local.PreferencesRepository
@@ -76,6 +82,9 @@ data class DocumentEditorUiState(
     val isLoading: Boolean = false,
     val isAiExtracting: Boolean = false,
     val extractedText: String = "",
+    val docxParsed: DocxParsedDocument? = null,
+    val pdfTextLines: List<PdfEditableTextLine> = emptyList(),
+    val pageCount: Int = 1,
     val extractionVersion: Int = 0,
     val statusBanner: String? = null
 )
@@ -223,7 +232,7 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
     fun openDocumentEditor(docId: Long) {
         val doc = documents.value.firstOrNull { it.id == docId } ?: return
         activeEditorJob?.cancel()
-        _editorState.value = DocumentEditorUiState(isLoading = true)
+        _editorState.value = DocumentEditorUiState(isLoading = true, pageCount = doc.pageCount.coerceAtLeast(1))
         _uiState.update {
             it.copy(
                 selectedPreviewDocId = docId,
@@ -231,31 +240,39 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
             )
         }
         activeEditorJob = viewModelScope.launch {
-            val localText = engine.extractEditableText(doc.filePath)
             val isPdfOrScan = doc.format == DocumentFormat.PDF || doc.format == DocumentFormat.SCAN
-            if (localText.length >= 24 || !isPdfOrScan) {
-                val resolved = localText.ifBlank { doc.summarySnippet }
-                _editorState.update { state ->
-                    state.copy(
-                        isLoading = false,
-                        isAiExtracting = false,
-                        extractedText = resolved,
-                        extractionVersion = state.extractionVersion + 1,
-                        statusBanner = if (isPdfOrScan) {
-                            "Extracted text on-device. Tap AI Extract Text if any scanned/styled page needs OCR."
-                        } else null
-                    )
+            val isDocx = doc.filePath.lowercase().endsWith(".docx")
+            val pageCount = if (isPdfOrScan) engine.getPdfPageCount(doc.filePath) else 1
+            val parsedDocx = if (isDocx) engine.parseDocxPreservingFormat(doc.filePath) else null
+            val positionedLines = if (isPdfOrScan) engine.extractPositionedPdfLines(doc.filePath) else emptyList()
+            val localText = engine.extractEditableText(doc.filePath)
+            val resolved = localText.ifBlank { doc.summarySnippet }
+
+            val banner = when {
+                isPdfOrScan && positionedLines.isNotEmpty() ->
+                    "Detected ${positionedLines.size} editable text line(s). Tap any existing text directly on the page to edit it in place."
+                isPdfOrScan ->
+                    "Image/scanned PDF — tap anywhere on the page to cover & type replacement text, or sign/redact."
+                parsedDocx != null -> {
+                    val imgNote = if (parsedDocx.embeddedImageCount > 0) {
+                        " & ${parsedDocx.embeddedImageCount} embedded image(s)"
+                    } else ""
+                    "Preserve-format mode active: original styles, alignment$imgNote stay intact on save."
                 }
-            } else {
-                _editorState.update { state ->
-                    state.copy(
-                        isLoading = false,
-                        isAiExtracting = false,
-                        extractedText = localText.ifBlank { doc.summarySnippet },
-                        extractionVersion = state.extractionVersion + 1,
-                        statusBanner = "Loaded local text. Tap AI Extract Text to open this page in your Google Gemini account and paste the transcribed text."
-                    )
-                }
+                else -> null
+            }
+
+            _editorState.update { state ->
+                state.copy(
+                    isLoading = false,
+                    isAiExtracting = false,
+                    extractedText = resolved,
+                    docxParsed = parsedDocx,
+                    pdfTextLines = positionedLines,
+                    pageCount = pageCount,
+                    extractionVersion = state.extractionVersion + 1,
+                    statusBanner = banner
+                )
             }
         }
     }
@@ -327,6 +344,101 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
                         isProcessing = false,
                         processingLabel = "",
                         snackbarMessage = e.message ?: "Could not save edited document"
+                    )
+                }
+            }
+        }
+    }
+
+    fun saveVisualEditedPdf(
+        source: DocumentEntity,
+        newTitle: String,
+        edits: List<PdfTextOverlayEdit>,
+        signatures: List<PdfSignatureOverlay> = emptyList(),
+        redactions: List<PdfRedactionOverlay> = emptyList(),
+        sanitizeMetadata: Boolean = false,
+        overwriteOriginal: Boolean
+    ) {
+        viewModelScope.launch {
+            val statusMsg = if (redactions.isNotEmpty() || sanitizeMetadata) {
+                "Applying permanent redactions & saving clean PDF…"
+            } else {
+                "Saving PDF with original layout & images…"
+            }
+            _uiState.update { it.copy(isProcessing = true, processingLabel = statusMsg) }
+            try {
+                val saved = repository.saveVisualEditedPdf(
+                    source = source,
+                    newTitle = newTitle,
+                    edits = edits,
+                    signatures = signatures,
+                    redactions = redactions,
+                    sanitizeMetadata = sanitizeMetadata,
+                    overwriteOriginal = overwriteOriginal
+                )
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        selectedPreviewDocId = saved.id,
+                        overlay = StudyLeafOverlay.Reader(saved.id, saved),
+                        snackbarMessage = if (overwriteOriginal) {
+                            "Updated \"${saved.title}\" locally"
+                        } else {
+                            "Saved \"${saved.title}\" locally"
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("StudyLeafVM", "Failed to save visual edited PDF", e)
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        snackbarMessage = e.message ?: "Could not save edited PDF"
+                    )
+                }
+            }
+        }
+    }
+
+    fun savePreservedDocxDocument(
+        source: DocumentEntity,
+        newTitle: String,
+        editedParagraphsByIndex: Map<Int, String>,
+        previewBodyText: String,
+        overwriteOriginal: Boolean
+    ) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isProcessing = true, processingLabel = "Saving Word file with original formatting…") }
+            try {
+                val saved = repository.savePreservedDocxDocument(
+                    source = source,
+                    newTitle = newTitle,
+                    editedParagraphsByIndex = editedParagraphsByIndex,
+                    previewBodyText = previewBodyText,
+                    overwriteOriginal = overwriteOriginal
+                )
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        selectedPreviewDocId = saved.id,
+                        overlay = StudyLeafOverlay.Reader(saved.id, saved),
+                        snackbarMessage = if (overwriteOriginal) {
+                            "Updated \"${saved.title}.docx\" (images & formatting preserved)"
+                        } else {
+                            "Saved \"${saved.title}.docx\" (images & formatting preserved)"
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("StudyLeafVM", "Failed to save preserved DOCX", e)
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        snackbarMessage = e.message ?: "Could not save Word document"
                     )
                 }
             }
@@ -741,23 +853,40 @@ class StudyLeafViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun runReorderPages(source: DocumentEntity, orderedPages: List<Int>, outputTitle: String) {
-        if (orderedPages.isEmpty()) return
+    fun runReorderPages(
+        source: DocumentEntity,
+        orderedPages: List<Int>,
+        outputTitle: String,
+        pageSpecs: List<PdfPageSpec>? = null
+    ) {
+        if (orderedPages.isEmpty() && pageSpecs.isNullOrEmpty()) return
         viewModelScope.launch {
             _uiState.update { it.copy(isProcessing = true, processingLabel = "Rebuilding PDF pages…") }
-            val doc = repository.reorderDocumentPages(
-                source = source,
-                orderedZeroBasedPages = orderedPages,
-                outputTitle = outputTitle.ifBlank { "${source.title} (Reordered)" }
-            )
-            _uiState.update {
-                it.copy(
-                    isProcessing = false,
-                    processingLabel = "",
-                    selectedPreviewDocId = doc.id,
-                    overlay = StudyLeafOverlay.Reader(doc.id),
-                    snackbarMessage = "Saved \"${doc.title}\" with ${doc.pageCount} pages"
+            try {
+                val doc = repository.reorderDocumentPages(
+                    source = source,
+                    orderedZeroBasedPages = orderedPages,
+                    outputTitle = outputTitle.ifBlank { "${source.title} (Organized)" },
+                    pageSpecs = pageSpecs
                 )
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        selectedPreviewDocId = doc.id,
+                        overlay = StudyLeafOverlay.Reader(doc.id, doc),
+                        snackbarMessage = "Saved \"${doc.title}\" (${doc.pageCount} page${if (doc.pageCount == 1) "" else "s"})"
+                    )
+                }
+            } catch (e: Exception) {
+                Log.e("StudyLeafVM", "Page reorder failed", e)
+                _uiState.update {
+                    it.copy(
+                        isProcessing = false,
+                        processingLabel = "",
+                        snackbarMessage = e.message ?: "Could not organize PDF pages"
+                    )
+                }
             }
         }
     }

@@ -6,6 +6,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -17,13 +18,26 @@ import com.example.data.model.ThemePreference
 import com.example.ui.StudyLeafApp
 import com.example.ui.StudyLeafViewModel
 import com.example.ui.theme.StudyLeafTheme
+import com.example.update.InAppUpdateController
 
 class MainActivity : ComponentActivity() {
 
     private val pendingExternalUri = mutableStateOf<Uri?>(null)
+    private lateinit var inAppUpdateController: InAppUpdateController
+
+    private val inAppUpdateLauncher = registerForActivityResult(
+        ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        if (::inAppUpdateController.isInitialized) {
+            inAppUpdateController.onActivityResult(result.resultCode)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        inAppUpdateController = InAppUpdateController(applicationContext)
+        inAppUpdateController.attach(inAppUpdateLauncher)
 
         if (savedInstanceState == null) {
             pendingExternalUri.value = extractIncomingDocumentUri(intent)
@@ -33,6 +47,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             val viewModel: StudyLeafViewModel = viewModel()
             val themePref by viewModel.themePreference.collectAsStateWithLifecycle()
+            val updateState by inAppUpdateController.state.collectAsStateWithLifecycle()
             val incomingUri by pendingExternalUri
 
             LaunchedEffect(incomingUri) {
@@ -51,10 +66,32 @@ class MainActivity : ComponentActivity() {
             StudyLeafTheme(darkTheme = isDark) {
                 StudyLeafApp(
                     viewModel = viewModel,
-                    isDarkTheme = isDark
+                    isDarkTheme = isDark,
+                    updateState = updateState,
+                    onCheckForUpdates = { inAppUpdateController.checkForUpdate(userInitiated = true) },
+                    onStartInAppUpdate = { inAppUpdateController.startPlayFlexibleUpdate() },
+                    onCompleteInAppUpdate = { inAppUpdateController.completeDownloadedUpdate() },
+                    onDismissUpdateBanner = { inAppUpdateController.dismissBanner() },
+                    onOpenExternalRelease = { url ->
+                        inAppUpdateController.openExternalReleasePage(this@MainActivity, url)
+                    }
                 )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::inAppUpdateController.isInitialized) {
+            inAppUpdateController.checkOnResume()
+        }
+    }
+
+    override fun onDestroy() {
+        if (::inAppUpdateController.isInitialized) {
+            inAppUpdateController.detach()
+        }
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {

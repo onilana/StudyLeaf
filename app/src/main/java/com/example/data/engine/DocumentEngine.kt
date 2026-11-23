@@ -36,6 +36,81 @@ data class GeneratedFileInfo(
     val sizeBytes: Long
 )
 
+data class PdfTextOverlayEdit(
+    val id: Long,
+    val pageIndex: Int,
+    val xFraction: Float,
+    val yFraction: Float,
+    val widthFraction: Float = 0.56f,
+    val text: String,
+    val fontSizePt: Float = 13f,
+    val colorArgb: Int = Color.parseColor("#1A1C1E"),
+    val isBold: Boolean = false,
+    val alignment: Paint.Align = Paint.Align.LEFT,
+    val coverOriginal: Boolean = true,
+    val coverColorArgb: Int = Color.WHITE,
+    val sourceLineId: String? = null,
+    val minCoverHeightFraction: Float = 0f
+)
+
+data class PdfSignatureOverlay(
+    val id: Long,
+    val pageIndex: Int,
+    val xFraction: Float,
+    val yFraction: Float,
+    val widthFraction: Float = 0.34f,
+    val aspectRatio: Float = 2.4f, // width / height
+    val strokes: List<List<NormalizedPoint>>, // normalized 0..1 inside signature box
+    val colorArgb: Int = Color.parseColor("#111827"),
+    val strokeWidthPt: Float = 2.4f
+)
+
+data class PdfRedactionOverlay(
+    val id: Long,
+    val pageIndex: Int,
+    val xFraction: Float,
+    val yFraction: Float,
+    val widthFraction: Float = 0.36f,
+    val heightFraction: Float = 0.045f,
+    val label: String = ""
+)
+
+data class PdfPageSpec(
+    val originalPageIndex: Int,
+    val rotationDegrees: Int = 0 // 0, 90, 180, 270
+)
+
+/**
+ * Parses PenguinPDF-style 1-based page range expressions such as "1-3, 5, 8-" into
+ * 0-based page indices bounded by [totalPages].
+ */
+fun parsePageRangeSpec(input: String, totalPages: Int): List<Int> {
+    if (totalPages <= 0) return emptyList()
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return emptyList()
+    val result = mutableListOf<Int>()
+    for (rawToken in trimmed.split(",", ";")) {
+        val token = rawToken.trim()
+        if (token.isEmpty()) continue
+        if (token.contains("-")) {
+            val parts = token.split("-", limit = 2)
+            val startOne = parts[0].trim().toIntOrNull() ?: 1
+            val endOne = parts.getOrNull(1)?.trim()?.takeIf { it.isNotEmpty() }?.toIntOrNull() ?: totalPages
+            val s = startOne.coerceIn(1, totalPages)
+            val e = endOne.coerceIn(1, totalPages)
+            if (s <= e) {
+                for (p in s..e) result.add(p - 1)
+            } else {
+                for (p in s downTo e) result.add(p - 1)
+            }
+        } else {
+            val single = token.toIntOrNull() ?: continue
+            if (single in 1..totalPages) result.add(single - 1)
+        }
+    }
+    return result
+}
+
 class DocumentEngine(private val context: Context) {
 
     private val documentsDir: File
@@ -212,29 +287,46 @@ class DocumentEngine(private val context: Context) {
     suspend fun reorderAndExtractPdf(
         sourcePath: String,
         orderedZeroBasedPages: List<Int>,
-        outputTitle: String
+        outputTitle: String,
+        pageSpecs: List<PdfPageSpec>? = null
     ): GeneratedFileInfo = withContext(Dispatchers.IO) {
         val outFile = File(documentsDir, safeFileName(outputTitle, "pdf"))
         val srcFile = File(sourcePath)
+        val specs = pageSpecs ?: orderedZeroBasedPages.map { PdfPageSpec(it, 0) }
         val pdfDoc = PdfDocument()
         var written = 0
+        val drawPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
         try {
             ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
                 PdfRenderer(pfd).use { renderer ->
-                    for (idx in orderedZeroBasedPages) {
+                    for (spec in specs) {
+                        val idx = spec.originalPageIndex
                         if (idx !in 0 until renderer.pageCount) continue
+                        val rot = ((spec.rotationDegrees % 360) + 360) % 360
                         renderer.openPage(idx).use { page ->
-                            val w = 595
-                            val h = max(400, (w * page.height.toFloat() / max(1, page.width)).roundToInt())
-                            val bmp = Bitmap.createBitmap(w * 2, h * 2, Bitmap.Config.ARGB_8888)
-                            Canvas(bmp).drawColor(Color.WHITE)
-                            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
-                            val info = PdfDocument.PageInfo.Builder(w, h, written + 1).create()
-                            val outPage = pdfDoc.startPage(info)
-                            outPage.canvas.drawBitmap(bmp, null, Rect(0, 0, w, h), null)
-                            pdfDoc.finishPage(outPage)
-                            bmp.recycle()
-                            written++
+                            val baseW = 595
+                            val baseH = max(400, (baseW * page.height.toFloat() / max(1, page.width)).roundToInt())
+                            val bmp = Bitmap.createBitmap(baseW * 2, baseH * 2, Bitmap.Config.ARGB_8888)
+                            var finalBmp = bmp
+                            try {
+                                Canvas(bmp).drawColor(Color.WHITE)
+                                page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
+                                if (rot != 0) {
+                                    val m = Matrix().apply { postRotate(rot.toFloat()) }
+                                    finalBmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+                                }
+                                val outW = if (rot == 90 || rot == 270) baseH else baseW
+                                val outH = if (rot == 90 || rot == 270) baseW else baseH
+                                val info = PdfDocument.PageInfo.Builder(outW, outH, written + 1).create()
+                                val outPage = pdfDoc.startPage(info)
+                                outPage.canvas.drawColor(Color.WHITE)
+                                outPage.canvas.drawBitmap(finalBmp, null, Rect(0, 0, outW, outH), drawPaint)
+                                pdfDoc.finishPage(outPage)
+                                written++
+                            } finally {
+                                if (finalBmp !== bmp && !finalBmp.isRecycled) finalBmp.recycle()
+                                if (!bmp.isRecycled) bmp.recycle()
+                            }
                         }
                     }
                 }
@@ -524,6 +616,321 @@ class DocumentEngine(private val context: Context) {
         GeneratedFileInfo(outFile, estimatedPages, outFile.length())
     }
 
+    suspend fun parseDocxPreservingFormat(filePath: String): DocxParsedDocument? =
+        withContext(Dispatchers.IO) {
+            val file = File(filePath)
+            if (!file.exists() || !file.name.lowercase().endsWith(".docx")) return@withContext null
+            DocxInPlaceEditor.parseDocx(file)
+        }
+
+    suspend fun saveEditedDocxPreservingFormat(
+        sourcePath: String,
+        title: String,
+        editedParagraphsByIndex: Map<Int, String>,
+        fallbackBodyText: String
+    ): GeneratedFileInfo = withContext(Dispatchers.IO) {
+        val srcFile = File(sourcePath)
+        val outFile = File(documentsDir, safeFileName(title, "docx"))
+        val patched = srcFile.exists() &&
+            srcFile.name.lowercase().endsWith(".docx") &&
+            DocxInPlaceEditor.saveEditedDocxPreservingFormat(
+                sourceDocx = srcFile,
+                destDocx = outFile,
+                editedParagraphsByIndex = editedParagraphsByIndex
+            )
+        if (!patched) {
+            return@withContext saveEditedWordDocx(title, fallbackBodyText)
+        }
+        val refreshedText = readTextOrDocx(outFile).ifBlank { fallbackBodyText }
+        saveEditableTextCache(outFile, refreshedText)
+        val estimatedPages = max(1, (refreshedText.length / 2600) + 1)
+        GeneratedFileInfo(outFile, estimatedPages, outFile.length())
+    }
+
+    /**
+     * Renders every original PDF page at print fidelity (keeping 100% of embedded images, tables,
+     * vector graphics, fonts, and original alignment intact) and composites text edits, hand-drawn
+     * signatures, and permanent redactions cleanly on top.
+     */
+    suspend fun applyVisualEditsToPdf(
+        sourcePath: String,
+        edits: List<PdfTextOverlayEdit>,
+        signatures: List<PdfSignatureOverlay> = emptyList(),
+        redactions: List<PdfRedactionOverlay> = emptyList(),
+        sanitizeMetadata: Boolean = false,
+        outputTitle: String
+    ): GeneratedFileInfo = withContext(Dispatchers.IO) {
+        val srcFile = File(sourcePath)
+        if (!srcFile.exists()) {
+            throw IllegalStateException("Source PDF file could not be found on this device.")
+        }
+        val outFile = File(documentsDir, safeFileName(outputTitle, "pdf"))
+        val pdfDoc = PdfDocument()
+        var written = 0
+        val editsByPage = edits.groupBy { it.pageIndex }
+        val signaturesByPage = signatures.groupBy { it.pageIndex }
+        val redactionsByPage = redactions.groupBy { it.pageIndex }
+        val drawBitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+
+        fun drawOverlaysOnCanvas(
+            canvas: Canvas,
+            pageW: Int,
+            pageH: Int,
+            pageEdits: List<PdfTextOverlayEdit>,
+            pageSignatures: List<PdfSignatureOverlay>,
+            pageRedactions: List<PdfRedactionOverlay>
+        ) {
+            // 1. Permanent Redactions (burned solidly over flattened raster page so underlying content is destroyed)
+            for (red in pageRedactions) {
+                val rLeft = (red.xFraction.coerceIn(0f, 0.96f) * pageW)
+                val rTop = (red.yFraction.coerceIn(0f, 0.96f) * pageH)
+                val rWidth = (red.widthFraction.coerceIn(0.06f, 0.98f) * pageW)
+                val rHeight = (red.heightFraction.coerceIn(0.015f, 0.45f) * pageH)
+                val rRight = (rLeft + rWidth).coerceAtMost(pageW.toFloat())
+                val rBottom = (rTop + rHeight).coerceAtMost(pageH.toFloat())
+                val redPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.parseColor("#0B0D0F")
+                    style = Paint.Style.FILL
+                }
+                canvas.drawRect(rLeft, rTop, rRight, rBottom, redPaint)
+            }
+
+            // 2. Text / In-Place Line Replacement / Form Stamp Overlays
+            for (edit in pageEdits) {
+                if (edit.text.isBlank() && !edit.coverOriginal) continue
+                val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = edit.colorArgb
+                    textSize = edit.fontSizePt.coerceIn(8f, 72f)
+                    typeface = Typeface.create(
+                        Typeface.SANS_SERIF,
+                        if (edit.isBold) Typeface.BOLD else Typeface.NORMAL
+                    )
+                    textAlign = edit.alignment
+                }
+                val isInPlaceLine = edit.sourceLineId != null
+                val boxW = (edit.widthFraction.coerceIn(0.08f, 0.96f) * pageW)
+                val padX = if (isInPlaceLine) 2.5f else 6f
+                val padY = if (isInPlaceLine) 1.5f else 4f
+                val innerW = (boxW - padX * 2f).coerceAtLeast(24f)
+                val left = (edit.xFraction.coerceIn(0f, 0.96f) * pageW)
+                    .coerceAtMost((pageW - boxW - 1f).coerceAtLeast(1f))
+                val top = (edit.yFraction.coerceIn(0f, 0.96f) * pageH)
+                    .coerceAtMost((pageH - 18f).coerceAtLeast(1f))
+
+                val wrappedLines = if (edit.text.isBlank()) emptyList() else wrapOverlayText(edit.text, textPaint, innerW)
+                val lineHeight = textPaint.textSize * (if (isInPlaceLine) 1.24f else 1.32f)
+                val contentHeight = max(lineHeight, wrappedLines.size * lineHeight)
+                val minCoverH = edit.minCoverHeightFraction.coerceIn(0f, 0.45f) * pageH
+                val coverH = max(contentHeight + padY * 2f, minCoverH)
+                val boxBottom = (top + coverH).coerceAtMost(pageH.toFloat() - 1f)
+
+                if (edit.coverOriginal) {
+                    val coverPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = edit.coverColorArgb
+                        style = Paint.Style.FILL
+                    }
+                    val coverLeft = (left - if (isInPlaceLine) 1.5f else 0f).coerceAtLeast(0f)
+                    val coverTop = (top - if (isInPlaceLine) 1f else 0f).coerceAtLeast(0f)
+                    val coverRight = (left + boxW + if (isInPlaceLine) 1.5f else 0f).coerceAtMost(pageW.toFloat())
+                    canvas.drawRect(coverLeft, coverTop, coverRight, boxBottom, coverPaint)
+                }
+
+                if (wrappedLines.isNotEmpty()) {
+                    val textDrawX = when (edit.alignment) {
+                        Paint.Align.CENTER -> left + boxW / 2f
+                        Paint.Align.RIGHT -> (left + boxW - padX).coerceAtMost(pageW.toFloat() - 2f)
+                        else -> left + padX
+                    }
+                    val fm = textPaint.fontMetrics
+                    var baselineY = top + padY - fm.ascent
+                    for (line in wrappedLines) {
+                        if (baselineY - fm.descent > pageH.toFloat()) break
+                        if (line.isNotEmpty()) {
+                            canvas.drawText(line, textDrawX, baselineY, textPaint)
+                        }
+                        baselineY += lineHeight
+                    }
+                }
+            }
+
+            // 3. Hand-Drawn Signatures (crisp vector strokes)
+            for (sig in pageSignatures) {
+                if (sig.strokes.isEmpty()) continue
+                val sWidth = (sig.widthFraction.coerceIn(0.12f, 0.85f) * pageW)
+                val sHeight = (sWidth / sig.aspectRatio.coerceIn(1.2f, 4.5f)).coerceAtLeast(24f)
+                val sLeft = (sig.xFraction.coerceIn(0f, 0.94f) * pageW)
+                    .coerceAtMost((pageW - sWidth - 2f).coerceAtLeast(2f))
+                val sTop = (sig.yFraction.coerceIn(0f, 0.94f) * pageH)
+                    .coerceAtMost((pageH - sHeight - 2f).coerceAtLeast(2f))
+                val sigPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = sig.colorArgb
+                    style = Paint.Style.STROKE
+                    strokeWidth = sig.strokeWidthPt.coerceIn(1.2f, 6f)
+                    strokeCap = Paint.Cap.ROUND
+                    strokeJoin = Paint.Join.ROUND
+                }
+                for (stroke in sig.strokes) {
+                    if (stroke.size == 1) {
+                        val pt = stroke[0]
+                        canvas.drawCircle(sLeft + pt.x * sWidth, sTop + pt.y * sHeight, sigPaint.strokeWidth / 2f, sigPaint)
+                    } else if (stroke.size >= 2) {
+                        val path = android.graphics.Path()
+                        path.moveTo(sLeft + stroke[0].x * sWidth, sTop + stroke[0].y * sHeight)
+                        for (k in 1 until stroke.size) {
+                            val prev = stroke[k - 1]
+                            val cur = stroke[k]
+                            val midX = sLeft + ((prev.x + cur.x) * 0.5f) * sWidth
+                            val midY = sTop + ((prev.y + cur.y) * 0.5f) * sHeight
+                            path.quadTo(sLeft + prev.x * sWidth, sTop + prev.y * sHeight, midX, midY)
+                        }
+                        val last = stroke.last()
+                        path.lineTo(sLeft + last.x * sWidth, sTop + last.y * sHeight)
+                        canvas.drawPath(path, sigPaint)
+                    }
+                }
+            }
+        }
+
+        try {
+            if (srcFile.name.lowercase().endsWith(".pdf")) {
+                ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+                    PdfRenderer(pfd).use { renderer ->
+                        for (i in 0 until renderer.pageCount) {
+                            renderer.openPage(i).use { page ->
+                                val w = 595
+                                val h = max(400, (w * page.height.toFloat() / max(1, page.width)).roundToInt())
+                                val renderBmp = Bitmap.createBitmap(w * 2, h * 2, Bitmap.Config.ARGB_8888)
+                                try {
+                                    Canvas(renderBmp).drawColor(Color.WHITE)
+                                    page.render(renderBmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_PRINT)
+                                    // Burn permanent redactions directly onto the rasterized bitmap BEFORE embedding in PDF
+                                    val pageReds = redactionsByPage[i].orEmpty()
+                                    if (pageReds.isNotEmpty()) {
+                                        val bmpCanvas = Canvas(renderBmp)
+                                        val burnPaint = Paint().apply {
+                                            color = Color.parseColor("#0B0D0F")
+                                            style = Paint.Style.FILL
+                                        }
+                                        for (red in pageReds) {
+                                            val bx1 = (red.xFraction.coerceIn(0f, 0.96f) * renderBmp.width)
+                                            val by1 = (red.yFraction.coerceIn(0f, 0.96f) * renderBmp.height)
+                                            val bx2 = (bx1 + red.widthFraction.coerceIn(0.06f, 0.98f) * renderBmp.width)
+                                                .coerceAtMost(renderBmp.width.toFloat())
+                                            val by2 = (by1 + red.heightFraction.coerceIn(0.015f, 0.45f) * renderBmp.height)
+                                                .coerceAtMost(renderBmp.height.toFloat())
+                                            bmpCanvas.drawRect(bx1, by1, bx2, by2, burnPaint)
+                                        }
+                                    }
+
+                                    val info = PdfDocument.PageInfo.Builder(w, h, written + 1).create()
+                                    val outPage = pdfDoc.startPage(info)
+                                    val canvas = outPage.canvas
+                                    canvas.drawColor(Color.WHITE)
+                                    canvas.drawBitmap(renderBmp, null, Rect(0, 0, w, h), drawBitmapPaint)
+                                    drawOverlaysOnCanvas(
+                                        canvas = canvas,
+                                        pageW = w,
+                                        pageH = h,
+                                        pageEdits = editsByPage[i].orEmpty(),
+                                        pageSignatures = signaturesByPage[i].orEmpty(),
+                                        pageRedactions = emptyList() // already permanently burned into bitmap
+                                    )
+                                    pdfDoc.finishPage(outPage)
+                                    written++
+                                } finally {
+                                    if (!renderBmp.isRecycled) renderBmp.recycle()
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                val bmp = renderPdfPage(sourcePath, 0, 1190)
+                if (bmp != null) {
+                    try {
+                        val w = 595
+                        val h = max(400, (w * bmp.height.toFloat() / max(1, bmp.width)).roundToInt())
+                        val info = PdfDocument.PageInfo.Builder(w, h, 1).create()
+                        val outPage = pdfDoc.startPage(info)
+                        outPage.canvas.drawColor(Color.WHITE)
+                        outPage.canvas.drawBitmap(bmp, null, Rect(0, 0, w, h), drawBitmapPaint)
+                        drawOverlaysOnCanvas(
+                            canvas = outPage.canvas,
+                            pageW = w,
+                            pageH = h,
+                            pageEdits = editsByPage[0].orEmpty(),
+                            pageSignatures = signaturesByPage[0].orEmpty(),
+                            pageRedactions = redactionsByPage[0].orEmpty()
+                        )
+                        pdfDoc.finishPage(outPage)
+                        written = 1
+                    } finally {
+                        if (!bmp.isRecycled) bmp.recycle()
+                    }
+                }
+            }
+
+            if (written == 0) {
+                throw IllegalStateException("This PDF has no renderable pages.")
+            }
+
+            FileOutputStream(outFile).use { pdfDoc.writeTo(it) }
+
+            // If user redacted sensitive info or enabled Sanitize Metadata, do NOT carry over hidden text caches
+            if (!sanitizeMetadata && redactions.isEmpty()) {
+                val existingText = extractEditableText(sourcePath)
+                val appended = edits.map { it.text.trim() }.filter { it.isNotEmpty() }.joinToString("\n")
+                val combinedText = listOf(existingText.trim(), appended).filter { it.isNotEmpty() }.joinToString("\n\n")
+                if (combinedText.isNotBlank()) {
+                    saveEditableTextCache(outFile, combinedText)
+                }
+            } else {
+                runCatching { sidecarTextFile(outFile).delete() }
+            }
+        } catch (e: Exception) {
+            runCatching { if (outFile.exists()) outFile.delete() }
+            throw e
+        } finally {
+            pdfDoc.close()
+        }
+        GeneratedFileInfo(outFile, max(1, written), outFile.length())
+    }
+
+    private fun wrapOverlayText(text: String, paint: Paint, maxWidth: Float): List<String> {
+        val result = mutableListOf<String>()
+        val normalized = text.replace("\r\n", "\n")
+        normalized.split("\n").forEach { paragraph ->
+            if (paragraph.isBlank()) {
+                result.add("")
+            } else {
+                val words = paragraph.split(Regex("\\s+")).filter { it.isNotEmpty() }
+                var current = StringBuilder()
+                for (word in words) {
+                    val candidate = if (current.isEmpty()) word else "$current $word"
+                    if (paint.measureText(candidate) <= maxWidth) {
+                        current = StringBuilder(candidate)
+                    } else {
+                        if (current.isNotEmpty()) result.add(current.toString())
+                        if (paint.measureText(word) > maxWidth) {
+                            var start = 0
+                            while (start < word.length) {
+                                val fit = paint.breakText(word, start, word.length, true, maxWidth, null)
+                                    .coerceAtLeast(1)
+                                val slice = word.substring(start, start + fit)
+                                start += fit
+                                if (start < word.length) result.add(slice) else current = StringBuilder(slice)
+                            }
+                        } else {
+                            current = StringBuilder(word)
+                        }
+                    }
+                }
+                if (current.isNotEmpty()) result.add(current.toString())
+            }
+        }
+        return if (result.isEmpty()) listOf("") else result
+    }
+
     suspend fun extractEditableText(filePath: String): String = withContext(Dispatchers.IO) {
         val file = File(filePath)
         if (!file.exists()) return@withContext ""
@@ -549,6 +956,13 @@ class DocumentEngine(private val context: Context) {
     private fun extractPdfTextOnDevice(file: File): String {
         return PdfTextExtractor.extractText(file)
     }
+
+    suspend fun extractPositionedPdfLines(filePath: String): List<PdfEditableTextLine> =
+        withContext(Dispatchers.IO) {
+            val file = File(filePath)
+            if (!file.exists() || !file.name.lowercase().endsWith(".pdf")) return@withContext emptyList()
+            PdfTextExtractor.extractPositionedLines(file)
+        }
 
     suspend fun pdfToPngImages(
         sourcePath: String,

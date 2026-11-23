@@ -8,12 +8,24 @@ import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
+data class PdfEditableTextLine(
+    val id: String,
+    val pageIndex: Int,
+    val text: String,
+    val xFraction: Float,
+    val yFraction: Float,
+    val widthFraction: Float,
+    val heightFraction: Float,
+    val fontSizePt: Float,
+    val isBold: Boolean = false
+)
+
 /**
  * Pure-Kotlin, on-device PDF text extractor with:
- * - FlateDecode stream inflation
- * - Per-font /ToUnicode CMap parsing (beginbfchar & beginbfrange)
- * - Full PDF text state machine (CTM q/Q/cm, Tm/Tlm, Td/TD/T*, Tf, TL, Tj, TJ kerning, ', ")
- * - 2D spatial line & word reconstruction so per-glyph Td/Tm/BT blocks never split into 1 char/line
+ * - FlateDecode stream inflation & PDF 1.5+ /ObjStm object stream unpacking
+ * - Per-font /ToUnicode CMap parsing (beginbfchar & beginbfrange) & bold font detection
+ * - Full PDF text state machine (CTM q/Q/cm, Tm/Tlm, Td/TD/T*, Tf, TL, Tz, Tj, TJ kerning, ', ")
+ * - 2D spatial line, column-span & bounding-box reconstruction mapped to each page's MediaBox/CropBox
  */
 object PdfTextExtractor {
 
@@ -105,7 +117,25 @@ object PdfTextExtractor {
         val width: Double,
         val fontSize: Double,
         val text: String,
-        val order: Int
+        val order: Int,
+        val isBold: Boolean = false
+    )
+
+    internal data class PdfPageBox(
+        val x0: Double = 0.0,
+        val y0: Double = 0.0,
+        val x1: Double = 595.0,
+        val y1: Double = 842.0,
+        val rotateDeg: Int = 0
+    ) {
+        val width: Double get() = max(1.0, x1 - x0)
+        val height: Double get() = max(1.0, y1 - y0)
+    }
+
+    private data class PageDescriptor(
+        val pageIndex: Int,
+        val box: PdfPageBox,
+        val contentObjNums: List<Int>
     )
 
     private sealed interface PdfToken {
@@ -132,18 +162,143 @@ object PdfTextExtractor {
         }
     }
 
+    /**
+     * Extracts every existing text line/column-span across all pages with normalized top-left
+     * bounding boxes so users can tap directly on existing PDF text to edit it in place.
+     */
+    fun extractPositionedLines(file: File): List<PdfEditableTextLine> {
+        return try {
+            if (!file.exists() || file.length() == 0L) return emptyList()
+            val bytes = file.readBytes()
+            extractPositionedLinesFromBytes(bytes)
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    internal fun extractPositionedLinesFromBytes(bytes: ByteArray): List<PdfEditableTextLine> {
+        val latin = String(bytes, Charsets.ISO_8859_1)
+        val streams = extractCandidateStreams(bytes, latin)
+
+        val cmapsByObjNum = mutableMapOf<Int, FontCMap>()
+        val fallbackCMap = FontCMap()
+        val contentStreamsByObj = mutableMapOf<Int, String>()
+        val orderedContentStreams = mutableListOf<Pair<Int?, String>>()
+        val unpackedObjects = mutableMapOf<Int, String>()
+
+        for (stream in streams) {
+            if (stream.dictText.contains("/Type /ObjStm") || stream.dictText.contains("/Type/ObjStm")) {
+                parseObjectStream(stream.dictText, stream.data, unpackedObjects)
+                continue
+            }
+            val text = String(stream.data, Charsets.ISO_8859_1)
+            val isCMap = text.contains("beginbfchar") || text.contains("beginbfrange") ||
+                (text.contains("begincmap") && text.contains("endcmap"))
+            if (isCMap) {
+                val cmap = parseToUnicodeCMap(text)
+                if (!cmap.isEmpty()) {
+                    if (stream.objNum != null) {
+                        cmapsByObjNum[stream.objNum] = cmap
+                    }
+                    fallbackCMap.mergeFrom(cmap)
+                }
+            } else if (looksLikeTextContentStream(text)) {
+                if (stream.objNum != null) {
+                    contentStreamsByObj[stream.objNum] = text
+                }
+                orderedContentStreams.add(stream.objNum to text)
+            }
+        }
+
+        val allObjects = collectAllObjectDictionaries(latin, unpackedObjects)
+        val fontNameToCMap = buildFontNameToCMapLookup(latin, cmapsByObjNum, allObjects)
+        val boldFonts = buildBoldFontLookup(latin, allObjects)
+
+        val pages = resolvePageDescriptors(allObjects)
+        val result = mutableListOf<PdfEditableTextLine>()
+
+        val matchedPagesWithStreams = pages.filter { p ->
+            p.contentObjNums.any { contentStreamsByObj.containsKey(it) }
+        }
+
+        if (matchedPagesWithStreams.isNotEmpty()) {
+            for (page in pages) {
+                val combinedStream = page.contentObjNums
+                    .mapNotNull { contentStreamsByObj[it] }
+                    .joinToString("\n")
+                if (combinedStream.isBlank()) continue
+                val runs = extractRunsFromContentStream(
+                    stream = combinedStream,
+                    fontCMaps = fontNameToCMap,
+                    fallbackCMap = fallbackCMap,
+                    boldFonts = boldFonts
+                )
+                result.addAll(
+                    reconstructEditableLinesFromRuns(
+                        runs = runs,
+                        pageIndex = page.pageIndex,
+                        box = page.box
+                    )
+                )
+            }
+        } else {
+            // Fallback when PDF uses non-standard page tree: match decoded text streams sequentially
+            orderedContentStreams.forEachIndexed { idx, (_, streamText) ->
+                val runs = extractRunsFromContentStream(
+                    stream = streamText,
+                    fontCMaps = fontNameToCMap,
+                    fallbackCMap = fallbackCMap,
+                    boldFonts = boldFonts
+                )
+                if (runs.isEmpty()) return@forEachIndexed
+                val inferredBox = pages.getOrNull(idx)?.box ?: inferPageBoxFromRuns(runs)
+                result.addAll(
+                    reconstructEditableLinesFromRuns(
+                        runs = runs,
+                        pageIndex = idx,
+                        box = inferredBox
+                    )
+                )
+            }
+        }
+
+        return result
+    }
+
+    internal fun extractPositionedLinesFromContentStream(
+        stream: String,
+        pageIndex: Int = 0,
+        box: PdfPageBox = PdfPageBox(),
+        fontCMaps: Map<String, FontCMap> = emptyMap(),
+        fallbackCMap: FontCMap = FontCMap(),
+        boldFonts: Set<String> = emptySet()
+    ): List<PdfEditableTextLine> {
+        val runs = extractRunsFromContentStream(
+            stream = stream,
+            fontCMaps = fontCMaps,
+            fallbackCMap = fallbackCMap,
+            boldFonts = boldFonts
+        )
+        return reconstructEditableLinesFromRuns(runs, pageIndex, box)
+    }
+
     internal fun extractTextFromBytes(bytes: ByteArray): String {
         val latin = String(bytes, Charsets.ISO_8859_1)
 
         // 1. Scan all streams (inflating FlateDecode streams, skipping binary images/fonts/metadata)
         val streams = extractCandidateStreams(bytes, latin)
 
-        // 2. Parse ToUnicode CMaps
+        // 2. Parse ToUnicode CMaps & unpack any /ObjStm
         val cmapsByObjNum = mutableMapOf<Int, FontCMap>()
         val fallbackCMap = FontCMap()
         val contentStreams = mutableListOf<String>()
+        val unpackedObjects = mutableMapOf<Int, String>()
 
         for (stream in streams) {
+            if (stream.dictText.contains("/Type /ObjStm") || stream.dictText.contains("/Type/ObjStm")) {
+                parseObjectStream(stream.dictText, stream.data, unpackedObjects)
+                continue
+            }
             val text = String(stream.data, Charsets.ISO_8859_1)
             val isCMap = text.contains("beginbfchar") || text.contains("beginbfrange") ||
                 (text.contains("begincmap") && text.contains("endcmap"))
@@ -161,7 +316,8 @@ object PdfTextExtractor {
         }
 
         // 3. Map font resource names (/F1, /TT0, /C2_0, etc.) to their ToUnicode CMap
-        val fontNameToCMap = buildFontNameToCMapLookup(latin, cmapsByObjNum)
+        val allObjects = collectAllObjectDictionaries(latin, unpackedObjects)
+        val fontNameToCMap = buildFontNameToCMapLookup(latin, cmapsByObjNum, allObjects)
 
         // 4. Parse each content stream with full text-state & 2D spatial reconstruction
         val pageTexts = mutableListOf<String>()
@@ -193,8 +349,18 @@ object PdfTextExtractor {
         fontCMaps: Map<String, FontCMap> = emptyMap(),
         fallbackCMap: FontCMap = FontCMap()
     ): String {
+        val runs = extractRunsFromContentStream(stream, fontCMaps, fallbackCMap, emptySet())
+        return reconstructLinesFromRuns(runs)
+    }
+
+    private fun extractRunsFromContentStream(
+        stream: String,
+        fontCMaps: Map<String, FontCMap>,
+        fallbackCMap: FontCMap,
+        boldFonts: Set<String>
+    ): List<PositionedRun> {
         val tokens = tokenizeContentStream(stream)
-        if (tokens.isEmpty()) return ""
+        if (tokens.isEmpty()) return emptyList()
 
         val runs = mutableListOf<PositionedRun>()
         var runOrder = 0
@@ -244,7 +410,8 @@ object PdfTextExtractor {
                     width = estimatedWidth,
                     fontSize = effectiveFontSize,
                     text = cleaned,
-                    order = runOrder++
+                    order = runOrder++,
+                    isBold = boldFonts.contains(currentFont)
                 )
             )
 
@@ -401,7 +568,390 @@ object PdfTextExtractor {
             operands.clear()
         }
 
-        return reconstructLinesFromRuns(runs)
+        return runs
+    }
+
+    private fun reconstructEditableLinesFromRuns(
+        runs: List<PositionedRun>,
+        pageIndex: Int,
+        box: PdfPageBox
+    ): List<PdfEditableTextLine> {
+        if (runs.isEmpty()) return emptyList()
+
+        val sortedByY = runs.sortedWith(
+            compareByDescending<PositionedRun> { it.y }.thenBy { it.x }.thenBy { it.order }
+        )
+
+        data class VisualLine(
+            var baselineY: Double,
+            var avgFontSize: Double,
+            val items: MutableList<PositionedRun>
+        )
+
+        val visualLines = mutableListOf<VisualLine>()
+        for (run in sortedByY) {
+            val existing = visualLines.lastOrNull { line ->
+                val tolerance = max(2.5, min(line.avgFontSize, run.fontSize) * 0.48)
+                abs(run.y - line.baselineY) <= tolerance
+            }
+            if (existing != null) {
+                val n = existing.items.size
+                existing.baselineY = (existing.baselineY * n + run.y) / (n + 1)
+                existing.avgFontSize = (existing.avgFontSize * n + run.fontSize) / (n + 1)
+                existing.items.add(run)
+            } else {
+                visualLines.add(VisualLine(run.y, run.fontSize, mutableListOf(run)))
+            }
+        }
+
+        visualLines.sortByDescending { it.baselineY }
+
+        val rot = ((box.rotateDeg % 360) + 360) % 360
+        val visibleBoxW = if (rot == 90 || rot == 270) box.height else box.width
+
+        val editableLines = mutableListOf<PdfEditableTextLine>()
+        var spanCounter = 0
+
+        fun emitSpan(spanRuns: List<PositionedRun>, baselineY: Double) {
+            if (spanRuns.isEmpty()) return
+            val sb = StringBuilder()
+            var prevEndX: Double? = null
+            var prevFont = spanRuns.first().fontSize
+            var minX = Double.POSITIVE_INFINITY
+            var maxX = Double.NEGATIVE_INFINITY
+            var fontWeightedSum = 0.0
+            var charWeightSum = 0
+            var boldChars = 0
+
+            for (run in spanRuns) {
+                val t = run.text
+                if (t.isEmpty()) continue
+                if (prevEndX != null && sb.isNotEmpty()) {
+                    val gap = run.x - prevEndX
+                    val refFont = min(prevFont, run.fontSize).coerceIn(6.0, 48.0)
+                    val spaceThreshold = max(1.6, refFont * 0.22)
+                    if (!sb.last().isWhitespace() && !t.first().isWhitespace() && gap >= spaceThreshold) {
+                        sb.append(' ')
+                    }
+                }
+                sb.append(t)
+                minX = min(minX, run.x)
+                val endX = run.x + max(run.width, run.fontSize * 0.35)
+                maxX = max(maxX, endX)
+                prevEndX = if (prevEndX == null) endX else max(prevEndX, endX)
+                prevFont = run.fontSize
+                val w = t.trim().length.coerceAtLeast(1)
+                fontWeightedSum += run.fontSize * w
+                charWeightSum += w
+                if (run.isBold) boldChars += w
+            }
+
+            val finalText = sb.toString()
+                .replace(Regex("[ \\t]{2,}"), " ")
+                .trim()
+            if (finalText.isEmpty() || !isReadableLine(finalText)) return
+            if (!minX.isFinite() || !maxX.isFinite()) return
+
+            val avgFont = if (charWeightSum > 0) fontWeightedSum / charWeightSum else 12.0
+            val uLeft = ((minX - box.x0) / box.width).coerceIn(0.0, 0.98)
+            val uRight = ((maxX - box.x0) / box.width).coerceIn(uLeft + 0.02, 1.0)
+            val topPdfY = baselineY + avgFont * 0.90
+            val bottomPdfY = baselineY - avgFont * 0.28
+            val uTop = ((box.y1 - topPdfY) / box.height).coerceIn(0.0, 0.98)
+            val uBottom = ((box.y1 - bottomPdfY) / box.height).coerceIn(uTop + 0.012, 1.0)
+
+            // Apply PDF /Rotate into visual screen coordinates (0..1 top-left)
+            val (rx0, ry0, rx1, ry1) = when (rot) {
+                90 -> arrayOf(1.0 - uBottom, uLeft, 1.0 - uTop, uRight)
+                180 -> arrayOf(1.0 - uRight, 1.0 - uBottom, 1.0 - uLeft, 1.0 - uTop)
+                270 -> arrayOf(uTop, 1.0 - uRight, uBottom, 1.0 - uLeft)
+                else -> arrayOf(uLeft, uTop, uRight, uBottom)
+            }
+
+            val normX = min(rx0, rx1).toFloat().coerceIn(0f, 0.95f)
+            val normY = min(ry0, ry1).toFloat().coerceIn(0f, 0.96f)
+            val normW = abs(rx1 - rx0).toFloat().coerceIn(0.04f, (1f - normX).coerceAtLeast(0.04f))
+            val normH = abs(ry1 - ry0).toFloat().coerceIn(0.014f, 0.25f)
+            val canonicalPt = (avgFont * (595.0 / visibleBoxW)).toFloat().coerceIn(8f, 72f)
+            val isBold = charWeightSum > 0 && boldChars * 2 >= charWeightSum
+
+            editableLines.add(
+                PdfEditableTextLine(
+                    id = "p${pageIndex}_l${spanCounter++}",
+                    pageIndex = pageIndex,
+                    text = finalText,
+                    xFraction = normX,
+                    yFraction = normY,
+                    widthFraction = normW,
+                    heightFraction = normH,
+                    fontSizePt = canonicalPt,
+                    isBold = isBold
+                )
+            )
+        }
+
+        for (line in visualLines) {
+            val orderedRuns = line.items.sortedWith(
+                compareBy<PositionedRun> { it.x }.thenBy { it.order }
+            )
+            // Split wide column gaps (e.g. tables, two-column headers/forms) into independent editable spans
+            val currentSpan = mutableListOf<PositionedRun>()
+            var prevEndX: Double? = null
+            var prevFont = line.avgFontSize
+
+            for (run in orderedRuns) {
+                if (run.text.isEmpty()) continue
+                if (prevEndX != null && currentSpan.isNotEmpty()) {
+                    val gap = run.x - prevEndX
+                    val refFont = min(prevFont, run.fontSize).coerceIn(6.0, 48.0)
+                    val columnSplitThreshold = max(28.0, refFont * 3.4)
+                    if (gap > columnSplitThreshold) {
+                        emitSpan(currentSpan, line.baselineY)
+                        currentSpan.clear()
+                        prevEndX = null
+                    }
+                }
+                currentSpan.add(run)
+                val endX = run.x + max(run.width, run.fontSize * 0.35)
+                prevEndX = if (prevEndX == null) endX else max(prevEndX, endX)
+                prevFont = run.fontSize
+            }
+            if (currentSpan.isNotEmpty()) {
+                emitSpan(currentSpan, line.baselineY)
+            }
+        }
+
+        return editableLines
+    }
+
+    private fun inferPageBoxFromRuns(runs: List<PositionedRun>): PdfPageBox {
+        val maxX = runs.maxOfOrNull { it.x + it.width } ?: 595.0
+        val maxY = runs.maxOfOrNull { it.y + it.fontSize } ?: 842.0
+        val minY = runs.minOfOrNull { it.y } ?: 0.0
+        return when {
+            maxX <= 618.0 && maxY <= 798.0 && minY >= -10.0 -> PdfPageBox(0.0, 0.0, 612.0, 792.0)
+            maxX <= 605.0 && maxY <= 852.0 && minY >= -10.0 -> PdfPageBox(0.0, 0.0, 595.0, 842.0)
+            else -> PdfPageBox(0.0, 0.0, max(595.0, maxX + 36.0), max(842.0, maxY + 36.0))
+        }
+    }
+
+    private fun parseObjectStream(
+        dictText: String,
+        decodedBytes: ByteArray,
+        outObjects: MutableMap<Int, String>
+    ) {
+        try {
+            val nMatch = Regex("/N\\s+(\\d+)").find(dictText) ?: return
+            val firstMatch = Regex("/First\\s+(\\d+)").find(dictText) ?: return
+            val count = nMatch.groupValues[1].toIntOrNull()?.coerceIn(1, 5000) ?: return
+            val firstOffset = firstMatch.groupValues[1].toIntOrNull() ?: return
+            if (firstOffset <= 0 || firstOffset >= decodedBytes.size) return
+
+            val header = String(decodedBytes, 0, firstOffset, Charsets.ISO_8859_1)
+            val nums = Regex("\\d+").findAll(header).mapNotNull { it.value.toIntOrNull() }.toList()
+            val pairCount = min(count, nums.size / 2)
+            if (pairCount <= 0) return
+
+            val entries = ArrayList<Pair<Int, Int>>(pairCount)
+            for (i in 0 until pairCount) {
+                entries.add(nums[i * 2] to nums[i * 2 + 1])
+            }
+            for (i in entries.indices) {
+                val (objNum, relOff) = entries[i]
+                val start = firstOffset + relOff
+                val end = if (i + 1 < entries.size) {
+                    firstOffset + entries[i + 1].second
+                } else {
+                    decodedBytes.size
+                }
+                if (start in 0 until decodedBytes.size && end > start && end <= decodedBytes.size) {
+                    val len = min(end - start, 16384)
+                    outObjects[objNum] = String(decodedBytes, start, len, Charsets.ISO_8859_1)
+                }
+            }
+        } catch (_: Exception) {
+            // Ignore malformed object streams gracefully
+        }
+    }
+
+    private fun collectAllObjectDictionaries(
+        latin: String,
+        unpackedObjects: Map<Int, String>
+    ): Map<Int, String> {
+        val objects = HashMap<Int, String>(unpackedObjects.size + 64)
+        objects.putAll(unpackedObjects)
+        val objRegex = Regex("(\\d+)\\s+\\d+\\s+obj\\b(.*?)endobj", RegexOption.DOT_MATCHES_ALL)
+        objRegex.findAll(latin).forEach { m ->
+            val objNum = m.groupValues[1].toIntOrNull() ?: return@forEach
+            val body = m.groupValues[2]
+            // Strip binary stream payload if present so only the object dictionary stays in memory
+            val streamIdx = body.indexOf("stream")
+            val dictPart = if (streamIdx >= 0) body.substring(0, streamIdx) else body
+            if (dictPart.length <= 16384) {
+                objects[objNum] = dictPart
+            }
+        }
+        return objects
+    }
+
+    private fun resolvePageDescriptors(allObjects: Map<Int, String>): List<PageDescriptor> {
+        if (allObjects.isEmpty()) return emptyList()
+
+        val pagesTypeRegex = Regex("/Type\\s*/Pages\\b")
+        val pageTypeRegex = Regex("/Type\\s*/Page\\b(?!s)")
+        val catalogTypeRegex = Regex("/Type\\s*/Catalog\\b")
+        val refRegex = Regex("(\\d+)\\s+\\d+\\s+R")
+        val kidsRegex = Regex("/Kids\\s*\\[(.*?)]", RegexOption.DOT_MATCHES_ALL)
+        val parentRegex = Regex("/Parent\\s+(\\d+)\\s+\\d+\\s+R")
+        val pagesRefRegex = Regex("/Pages\\s+(\\d+)\\s+\\d+\\s+R")
+        val rotateRegex = Regex("/Rotate\\s+(-?\\d+)")
+        val contentsArrayRegex = Regex("/Contents\\s*\\[(.*?)]", RegexOption.DOT_MATCHES_ALL)
+        val contentsSingleRegex = Regex("/Contents\\s+(\\d+)\\s+\\d+\\s+R")
+
+        fun parseBox(dict: String, key: String): PdfPageBox? {
+            val boxRegex = Regex(
+                "$key\\s*\\[\\s*(-?\\d+(?:\\.\\d+)?)\\s+(-?\\d+(?:\\.\\d+)?)\\s+(-?\\d+(?:\\.\\d+)?)\\s+(-?\\d+(?:\\.\\d+)?)\\s*]"
+            )
+            val m = boxRegex.find(dict) ?: return null
+            val x0 = m.groupValues[1].toDoubleOrNull() ?: return null
+            val y0 = m.groupValues[2].toDoubleOrNull() ?: return null
+            val x1 = m.groupValues[3].toDoubleOrNull() ?: return null
+            val y1 = m.groupValues[4].toDoubleOrNull() ?: return null
+            if (abs(x1 - x0) < 10.0 || abs(y1 - y0) < 10.0) return null
+            return PdfPageBox(
+                x0 = min(x0, x1),
+                y0 = min(y0, y1),
+                x1 = max(x0, x1),
+                y1 = max(y0, y1)
+            )
+        }
+
+        fun extractContentRefs(dict: String): List<Int> {
+            val arrMatch = contentsArrayRegex.find(dict)
+            if (arrMatch != null) {
+                return refRegex.findAll(arrMatch.groupValues[1])
+                    .mapNotNull { it.groupValues[1].toIntOrNull() }
+                    .toList()
+            }
+            val singleMatch = contentsSingleRegex.find(dict)
+            if (singleMatch != null) {
+                val id = singleMatch.groupValues[1].toIntOrNull() ?: return emptyList()
+                // Handle indirect Contents array object (e.g. `12 0 obj [13 0 R 14 0 R] endobj`)
+                val targetBody = allObjects[id]?.trim()
+                if (targetBody != null && targetBody.startsWith("[")) {
+                    val nested = refRegex.findAll(targetBody)
+                        .mapNotNull { it.groupValues[1].toIntOrNull() }
+                        .toList()
+                    if (nested.isNotEmpty()) return nested
+                }
+                return listOf(id)
+            }
+            return emptyList()
+        }
+
+        val pagesNodes = mutableSetOf<Int>()
+        val pageNodes = mutableListOf<Int>()
+        var rootPagesObj: Int? = null
+
+        for ((objNum, body) in allObjects) {
+            when {
+                catalogTypeRegex.containsMatchIn(body) -> {
+                    val pRef = pagesRefRegex.find(body)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    if (pRef != null) rootPagesObj = pRef
+                }
+                pagesTypeRegex.containsMatchIn(body) -> pagesNodes.add(objNum)
+                pageTypeRegex.containsMatchIn(body) -> pageNodes.add(objNum)
+            }
+        }
+
+        if (rootPagesObj == null) {
+            rootPagesObj = pagesNodes.firstOrNull { id ->
+                val body = allObjects[id].orEmpty()
+                !parentRegex.containsMatchIn(body)
+            } ?: pagesNodes.firstOrNull()
+        }
+
+        val orderedPages = mutableListOf<PageDescriptor>()
+        val visited = mutableSetOf<Int>()
+
+        fun walkNode(objNum: Int, inheritedMediaBox: PdfPageBox, inheritedRotate: Int) {
+            if (!visited.add(objNum)) return
+            val body = allObjects[objNum] ?: return
+            val localMedia = parseBox(body, "/MediaBox") ?: inheritedMediaBox
+            val localCrop = parseBox(body, "/CropBox")
+            val localRotate = rotateRegex.find(body)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: inheritedRotate
+
+            if (pagesTypeRegex.containsMatchIn(body)) {
+                val kidsBody = kidsRegex.find(body)?.groupValues?.getOrNull(1) ?: return
+                refRegex.findAll(kidsBody).forEach { m ->
+                    val kidObj = m.groupValues[1].toIntOrNull() ?: return@forEach
+                    walkNode(kidObj, localMedia, localRotate)
+                }
+            } else if (pageTypeRegex.containsMatchIn(body)) {
+                val effectiveBox = (localCrop ?: localMedia).copy(rotateDeg = localRotate)
+                val contents = extractContentRefs(body)
+                orderedPages.add(
+                    PageDescriptor(
+                        pageIndex = orderedPages.size,
+                        box = effectiveBox,
+                        contentObjNums = contents
+                    )
+                )
+            }
+        }
+
+        if (rootPagesObj != null) {
+            walkNode(rootPagesObj, PdfPageBox(), 0)
+        }
+
+        // If tree walk found nothing, fall back to all /Type /Page objects sorted by object number
+        if (orderedPages.isEmpty() && pageNodes.isNotEmpty()) {
+            pageNodes.sorted().forEach { objNum ->
+                val body = allObjects[objNum] ?: return@forEach
+                val box = (parseBox(body, "/CropBox") ?: parseBox(body, "/MediaBox") ?: PdfPageBox())
+                    .copy(rotateDeg = rotateRegex.find(body)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0)
+                orderedPages.add(
+                    PageDescriptor(
+                        pageIndex = orderedPages.size,
+                        box = box,
+                        contentObjNums = extractContentRefs(body)
+                    )
+                )
+            }
+        }
+
+        return orderedPages
+    }
+
+    private fun buildBoldFontLookup(
+        latin: String,
+        allObjects: Map<Int, String>
+    ): Set<String> {
+        val boldFontObjs = mutableSetOf<Int>()
+        val baseFontRegex = Regex("/(?:BaseFont|FontName)\\s*/([A-Za-z0-9_+\\-,]+)")
+        val boldIndicatorRegex = Regex("(?i)(bold|black|heavy|semibold|demibold|extrabold|medium|-bd$|_bd$|,bold)")
+
+        for ((objNum, body) in allObjects) {
+            val match = baseFontRegex.find(body)
+            if (match != null && boldIndicatorRegex.containsMatchIn(match.groupValues[1])) {
+                boldFontObjs.add(objNum)
+            }
+        }
+        if (boldFontObjs.isEmpty()) return emptySet()
+
+        val boldResourceNames = mutableSetOf<String>()
+        val fontEntryRegex = Regex("(/[A-Za-z0-9_+\\-.]+)\\s+(\\d+)\\s+\\d+\\s+R")
+        val sources = sequenceOf(latin) + allObjects.values.asSequence()
+        for (src in sources) {
+            if (!src.contains("/Font") && !src.contains("/F")) continue
+            fontEntryRegex.findAll(src).forEach { entry ->
+                val refObj = entry.groupValues[2].toIntOrNull() ?: return@forEach
+                if (boldFontObjs.contains(refObj)) {
+                    boldResourceNames.add(entry.groupValues[1])
+                }
+            }
+        }
+        return boldResourceNames
     }
 
     private fun reconstructLinesFromRuns(runs: List<PositionedRun>): String {
@@ -626,19 +1176,17 @@ object PdfTextExtractor {
 
     private fun buildFontNameToCMapLookup(
         latin: String,
-        cmapsByObjNum: Map<Int, FontCMap>
+        cmapsByObjNum: Map<Int, FontCMap>,
+        allObjects: Map<Int, String> = emptyMap()
     ): Map<String, FontCMap> {
         if (cmapsByObjNum.isEmpty()) return emptyMap()
 
-        // 1. Map fontObjNum -> toUnicodeObjNum
+        // 1. Map fontObjNum -> toUnicodeObjNum (from both plaintext objects and unpacked /ObjStm)
         val fontObjToCMapObj = mutableMapOf<Int, Int>()
-        val objRegex = Regex("(\\d+)\\s+\\d+\\s+obj\\b(.*?)endobj", RegexOption.DOT_MATCHES_ALL)
         val toUnicodeRegex = Regex("/ToUnicode\\s+(\\d+)\\s+\\d+\\s+R")
 
-        objRegex.findAll(latin).forEach { m ->
-            val objBody = m.groupValues[2]
+        for ((fontObjNum, objBody) in allObjects) {
             if (objBody.length <= 4096 && objBody.contains("/ToUnicode")) {
-                val fontObjNum = m.groupValues[1].toIntOrNull() ?: return@forEach
                 val tuMatch = toUnicodeRegex.find(objBody)
                 val tuObjNum = tuMatch?.groupValues?.getOrNull(1)?.toIntOrNull()
                 if (tuObjNum != null) {
@@ -651,30 +1199,35 @@ object PdfTextExtractor {
         val fontNameToCMap = mutableMapOf<String, FontCMap>()
         val fontEntryRegex = Regex("(/[A-Za-z0-9_+\\-.]+)\\s+(\\d+)\\s+\\d+\\s+R")
         val fontDictRegex = Regex("/Font\\s*<<([^>]{1,4096})>>")
+        val searchTexts = sequenceOf(latin) + allObjects.values.asSequence()
 
-        fontDictRegex.findAll(latin).forEach { dictMatch ->
-            val inner = dictMatch.groupValues[1]
-            fontEntryRegex.findAll(inner).forEach { entry ->
-                val name = entry.groupValues[1]
-                val fontObj = entry.groupValues[2].toIntOrNull() ?: return@forEach
-                val cmapObj = fontObjToCMapObj[fontObj]
-                val cmap = cmapObj?.let { cmapsByObjNum[it] }
-                if (cmap != null) {
-                    fontNameToCMap[name] = cmap
+        for (src in searchTexts) {
+            fontDictRegex.findAll(src).forEach { dictMatch ->
+                val inner = dictMatch.groupValues[1]
+                fontEntryRegex.findAll(inner).forEach { entry ->
+                    val name = entry.groupValues[1]
+                    val fontObj = entry.groupValues[2].toIntOrNull() ?: return@forEach
+                    val cmapObj = fontObjToCMapObj[fontObj]
+                    val cmap = cmapObj?.let { cmapsByObjNum[it] }
+                    if (cmap != null) {
+                        fontNameToCMap[name] = cmap
+                    }
                 }
             }
         }
 
         // Also match indirect font dictionaries (e.g. << /F1 12 0 R /F2 15 0 R >>)
         if (fontObjToCMapObj.isNotEmpty()) {
-            fontEntryRegex.findAll(latin).forEach { entry ->
-                val name = entry.groupValues[1]
-                if (!fontNameToCMap.containsKey(name)) {
-                    val refObj = entry.groupValues[2].toIntOrNull() ?: return@forEach
-                    val cmapObj = fontObjToCMapObj[refObj]
-                    val cmap = cmapObj?.let { cmapsByObjNum[it] }
-                    if (cmap != null) {
-                        fontNameToCMap[name] = cmap
+            for (src in searchTexts) {
+                fontEntryRegex.findAll(src).forEach { entry ->
+                    val name = entry.groupValues[1]
+                    if (!fontNameToCMap.containsKey(name)) {
+                        val refObj = entry.groupValues[2].toIntOrNull() ?: return@forEach
+                        val cmapObj = fontObjToCMapObj[refObj]
+                        val cmap = cmapObj?.let { cmapsByObjNum[it] }
+                        if (cmap != null) {
+                            fontNameToCMap[name] = cmap
+                        }
                     }
                 }
             }

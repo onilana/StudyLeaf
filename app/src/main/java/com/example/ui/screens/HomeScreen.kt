@@ -1,7 +1,5 @@
 package com.example.ui.screens
 
-import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -29,23 +27,29 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DocumentScanner
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.OfflinePin
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -56,7 +60,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,7 +67,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -85,9 +87,9 @@ import com.example.ui.components.StudyLeafFilterChipsRow
 import com.example.ui.components.StudyLeafSearchBar
 import com.example.ui.components.StudyLeafWindowSize
 import com.example.ui.theme.StudyLeafThemeDefaults
+import com.example.update.InAppUpdatePhase
+import com.example.update.InAppUpdateUiState
 import java.util.Calendar
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @Composable
 fun HomeScreen(
@@ -102,6 +104,11 @@ fun HomeScreen(
     engine: DocumentEngine,
     onToggleTheme: () -> Unit,
     onOpenGeminiAccount: (Int) -> Unit,
+    updateState: InAppUpdateUiState = InAppUpdateUiState(),
+    onCheckForUpdates: () -> Unit = {},
+    onStartInAppUpdate: () -> Unit = {},
+    onCompleteInAppUpdate: () -> Unit = {},
+    onOpenExternalRelease: (String) -> Unit = {},
     onSearchChange: (String) -> Unit,
     onFilterChange: (LibraryFilter) -> Unit,
     onQuickToolClick: (ConversionToolType) -> Unit,
@@ -163,6 +170,11 @@ fun HomeScreen(
                 selectedDocId = selectedPreviewDoc?.id,
                 onToggleTheme = onToggleTheme,
                 onOpenGeminiAccount = onOpenGeminiAccount,
+                updateState = updateState,
+                onCheckForUpdates = onCheckForUpdates,
+                onStartInAppUpdate = onStartInAppUpdate,
+                onCompleteInAppUpdate = onCompleteInAppUpdate,
+                onOpenExternalRelease = onOpenExternalRelease,
                 onSearchChange = onSearchChange,
                 onFilterChange = onFilterChange,
                 onQuickToolClick = onQuickToolClick,
@@ -210,6 +222,11 @@ fun HomeScreen(
             selectedDocId = null,
             onToggleTheme = onToggleTheme,
             onOpenGeminiAccount = onOpenGeminiAccount,
+            updateState = updateState,
+            onCheckForUpdates = onCheckForUpdates,
+            onStartInAppUpdate = onStartInAppUpdate,
+            onCompleteInAppUpdate = onCompleteInAppUpdate,
+            onOpenExternalRelease = onOpenExternalRelease,
             onSearchChange = onSearchChange,
             onFilterChange = onFilterChange,
             onQuickToolClick = onQuickToolClick,
@@ -243,6 +260,11 @@ private fun HomeMainColumn(
     selectedDocId: Long?,
     onToggleTheme: () -> Unit,
     onOpenGeminiAccount: (Int) -> Unit,
+    updateState: InAppUpdateUiState,
+    onCheckForUpdates: () -> Unit,
+    onStartInAppUpdate: () -> Unit,
+    onCompleteInAppUpdate: () -> Unit,
+    onOpenExternalRelease: (String) -> Unit,
     onSearchChange: (String) -> Unit,
     onFilterChange: (LibraryFilter) -> Unit,
     onQuickToolClick: (ConversionToolType) -> Unit,
@@ -289,20 +311,12 @@ private fun HomeMainColumn(
             tag = "quick_action_merge"
         ),
         HomeToolTile(
-            title = "Word ⇄ PDF",
-            desc = "Upload & convert",
-            icon = Icons.AutoMirrored.Rounded.Article,
+            title = stringResource(R.string.tool_office_converter_title),
+            desc = stringResource(R.string.tool_office_converter_desc),
+            icon = Icons.Filled.SwapHoriz,
             color = channels.docWord,
             onClick = { onQuickToolClick(ConversionToolType.WORD_TO_PDF) },
-            tag = "quick_action_word_pdf"
-        ),
-        HomeToolTile(
-            title = stringResource(R.string.tool_excel_title),
-            desc = stringResource(R.string.tool_excel_desc),
-            icon = Icons.Filled.TableChart,
-            color = channels.docExcel,
-            onClick = { onQuickToolClick(ConversionToolType.EXCEL_CONVERTER) },
-            tag = "tool_excel_converter"
+            tag = "quick_action_office_converter"
         ),
         HomeToolTile(
             title = stringResource(R.string.tool_compress_img_title),
@@ -313,8 +327,8 @@ private fun HomeMainColumn(
             tag = "tool_compress_image"
         ),
         HomeToolTile(
-            title = "Split Pages",
-            desc = "Reorder PDFs",
+            title = "Organize PDF",
+            desc = "Split · Rotate",
             icon = Icons.Filled.ViewAgenda,
             color = channels.docPdf,
             onClick = { onQuickToolClick(ConversionToolType.SPLIT_REORDER) },
@@ -456,38 +470,58 @@ private fun HomeMainColumn(
         }
 
         item(key = "tools_header") {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(R.string.tools_title),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-                FilledTonalButton(
-                    onClick = onImportDocument,
-                    modifier = Modifier.testTag("home_import_button"),
-                    shape = CircleShape,
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.FileUpload,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "Import",
-                        style = MaterialTheme.typography.labelSmall
-                    )
+                    Column {
+                        Text(
+                            text = stringResource(R.string.tools_title),
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.VerifiedUser,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Text(
+                                text = "100% local · zero cloud uploads · sign & redact offline",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    FilledTonalButton(
+                        onClick = onImportDocument,
+                        modifier = Modifier.testTag("home_import_button"),
+                        shape = CircleShape,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.FileUpload,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Import",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
                 }
             }
         }
 
-        // Compact 3-row x 3-column tools grid
+        // Balanced compact tools grid (3 + 3 + 2 equal-width cards)
         item(key = "unified_tools_grid") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 gridToolTiles.chunked(3).forEach { rowItems ->
@@ -506,9 +540,6 @@ private fun HomeMainColumn(
                                 modifier = Modifier.weight(1f),
                                 testTag = tile.tag
                             )
-                        }
-                        repeat(3 - rowItems.size) {
-                            Spacer(modifier = Modifier.weight(1f))
                         }
                     }
                 }
@@ -603,6 +634,11 @@ private fun HomeMainColumn(
     val toolbarColorArgb = MaterialTheme.colorScheme.primary.toArgb()
     if (showAboutDialog) {
         StudyLeafAboutDialog(
+            updateState = updateState,
+            onCheckForUpdates = onCheckForUpdates,
+            onStartInAppUpdate = onStartInAppUpdate,
+            onCompleteInAppUpdate = onCompleteInAppUpdate,
+            onOpenExternalRelease = onOpenExternalRelease,
             onOpenGeminiAccount = {
                 showAboutDialog = false
                 onOpenGeminiAccount(toolbarColorArgb)
@@ -614,16 +650,15 @@ private fun HomeMainColumn(
 
 @Composable
 private fun StudyLeafAboutDialog(
+    updateState: InAppUpdateUiState,
+    onCheckForUpdates: () -> Unit,
+    onStartInAppUpdate: () -> Unit,
+    onCompleteInAppUpdate: () -> Unit,
+    onOpenExternalRelease: (String) -> Unit,
     onOpenGeminiAccount: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var isCheckingUpdates by remember { mutableStateOf(false) }
-    var updateStatus by remember { mutableStateOf<String?>(null) }
-
-    val upToDateMessage = stringResource(R.string.about_up_to_date, BuildConfig.VERSION_NAME)
-    val storeOpenedMessage = stringResource(R.string.about_store_opened)
+    val phase = updateState.phase
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -726,65 +761,140 @@ private fun StudyLeafAboutDialog(
                     )
                 }
 
-                FilledTonalButton(
-                    onClick = {
-                        if (isCheckingUpdates) return@FilledTonalButton
-                        val marketIntent = Intent(
-                            Intent.ACTION_VIEW,
-                            Uri.parse("market://details?id=${BuildConfig.APPLICATION_ID}")
-                        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                when (phase) {
+                    is InAppUpdatePhase.ReadyToInstall -> {
+                        Button(
+                            onClick = onCompleteInAppUpdate,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("about_restart_install_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.RestartAlt,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(R.string.update_restart_install),
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
 
-                        val launchedStore = runCatching {
-                            if (marketIntent.resolveActivity(context.packageManager) != null) {
-                                context.startActivity(marketIntent)
-                                true
+                    is InAppUpdatePhase.PlayUpdateAvailable -> {
+                        Button(
+                            onClick = onStartInAppUpdate,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("about_download_in_app_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(R.string.update_download_now),
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
+
+                    is InAppUpdatePhase.ExternalReleaseAvailable -> {
+                        Button(
+                            onClick = { onOpenExternalRelease(phase.releaseUrl) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("about_view_external_release_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.OpenInNew,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = stringResource(R.string.update_view_release, phase.latestVersion),
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                        }
+                    }
+
+                    else -> {
+                        FilledTonalButton(
+                            onClick = onCheckForUpdates,
+                            enabled = phase !is InAppUpdatePhase.Checking && phase !is InAppUpdatePhase.Downloading,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("about_check_updates_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (phase is InAppUpdatePhase.Checking || phase is InAppUpdatePhase.Downloading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (phase is InAppUpdatePhase.Downloading) {
+                                        val pct = (phase.progressFraction * 100f).toInt().coerceIn(0, 100)
+                                        "${stringResource(R.string.update_downloading)} $pct%"
+                                    } else {
+                                        stringResource(R.string.about_checking_updates)
+                                    },
+                                    style = MaterialTheme.typography.labelLarge
+                                )
                             } else {
-                                false
-                            }
-                        }.getOrDefault(false)
-
-                        if (launchedStore) {
-                            updateStatus = storeOpenedMessage
-                        } else {
-                            scope.launch {
-                                isCheckingUpdates = true
-                                updateStatus = null
-                                delay(450)
-                                isCheckingUpdates = false
-                                updateStatus = upToDateMessage
+                                Icon(
+                                    imageVector = Icons.Filled.SystemUpdate,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = stringResource(R.string.about_check_updates),
+                                    style = MaterialTheme.typography.labelLarge
+                                )
                             }
                         }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("about_check_updates_button"),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    if (isCheckingUpdates) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = stringResource(R.string.about_checking_updates),
-                            style = MaterialTheme.typography.labelLarge
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.SystemUpdate,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = stringResource(R.string.about_check_updates),
-                            style = MaterialTheme.typography.labelLarge
-                        )
                     }
                 }
 
-                if (updateStatus != null) {
+                if (phase is InAppUpdatePhase.Downloading) {
+                    if (phase.progressFraction > 0f) {
+                        LinearProgressIndicator(
+                            progress = { phase.progressFraction },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                }
+
+                val statusText = when (phase) {
+                    is InAppUpdatePhase.UpToDate ->
+                        stringResource(R.string.about_up_to_date, phase.currentVersion)
+                    is InAppUpdatePhase.ReadyToInstall ->
+                        stringResource(R.string.update_ready_title)
+                    is InAppUpdatePhase.PlayUpdateAvailable ->
+                        "New update ready to download directly inside StudyLeaf."
+                    is InAppUpdatePhase.ExternalReleaseAvailable ->
+                        buildString {
+                            append("StudyLeaf v${phase.latestVersion} is available.")
+                            if (phase.releaseNotes.isNotBlank()) {
+                                append("\n${phase.releaseNotes}")
+                            }
+                        }
+                    is InAppUpdatePhase.Error -> phase.message
+                    else -> null
+                }
+
+                if (statusText != null) {
                     Surface(
                         shape = RoundedCornerShape(10.dp),
                         color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
@@ -804,7 +914,7 @@ private fun StudyLeafAboutDialog(
                                 modifier = Modifier.size(16.dp)
                             )
                             Text(
-                                text = updateStatus.orEmpty(),
+                                text = statusText,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer
                             )

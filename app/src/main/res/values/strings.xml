@@ -46,6 +46,8 @@
     <string name="tool_pdf_img_desc">Export crisp page images</string>
     <string name="tool_excel_title">Excel ⇄ Doc</string>
     <string name="tool_excel_desc">Word/PDF &amp; XLSX</string>
+    <string name="tool_office_converter_title">Doc Converter</string>
+    <string name="tool_office_converter_desc">Word · Excel · PDF</string>
     <string name="tool_compress_img_title">Compress Img</string>
     <string name="tool_compress_img_desc">Shrink photo size</string>
     <string name="tool_studio_ai_title">PDF Studio</string>
@@ -107,9 +109,17 @@
     <string name="about_checking_updates">Checking for updates…</string>
     <string name="about_up_to_date">StudyLeaf v%1$s is up to date</string>
     <string name="about_store_opened">Opened Play Store update page</string>
+    <string name="update_available_title">StudyLeaf update available</string>
+    <string name="update_download_now">Download in App</string>
+    <string name="update_downloading">Downloading update…</string>
+    <string name="update_ready_title">Update downloaded and ready</string>
+    <string name="update_restart_install">Restart &amp; Install</string>
+    <string name="update_view_release">View v%1$s Release</string>
 
     <!-- Document Editor -->
     <string name="editor_title">Edit Document</string>
+    <string name="editor_mode_preserve_layout">Preserve Layout</string>
+    <string name="editor_mode_plain_text">Plain Text</string>
     <string name="editor_extracting_text">Extracting editable text…</string>
     <string name="editor_ai_extract">AI Extract Text</string>
     <string name="editor_find_replace">Find &amp; Replace</string>

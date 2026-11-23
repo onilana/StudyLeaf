@@ -109,7 +109,21 @@ fun ConversionStudioScreen(
 ) {
     BackHandler(onBack = onBack)
 
-    val channelColor = tool.formatChannel.channelColor()
+    val isUnifiedOfficeConverter = tool == ConversionToolType.WORD_TO_PDF ||
+        tool == ConversionToolType.EXCEL_CONVERTER
+    var activeOfficeTab by remember(tool) {
+        mutableStateOf(
+            if (tool == ConversionToolType.EXCEL_CONVERTER) OfficeConverterTab.EXCEL_DOC
+            else OfficeConverterTab.WORD_PDF
+        )
+    }
+
+    val activeFormatBadge = when {
+        isUnifiedOfficeConverter && activeOfficeTab == OfficeConverterTab.EXCEL_DOC -> DocumentFormat.EXCEL
+        isUnifiedOfficeConverter -> DocumentFormat.WORD
+        else -> tool.formatChannel
+    }
+    val channelColor = activeFormatBadge.channelColor()
 
     Column(
         modifier = Modifier
@@ -142,18 +156,71 @@ fun ConversionStudioScreen(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = tool.title,
+                        text = if (isUnifiedOfficeConverter) {
+                            stringResource(R.string.tool_office_converter_title)
+                        } else {
+                            tool.title
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = "Processed 100% locally on device",
+                        text = if (isUnifiedOfficeConverter) {
+                            "Word ⇄ PDF & Excel ⇄ Doc • 100% on-device"
+                        } else {
+                            "Processed 100% locally on device"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = channelColor
                     )
                 }
-                FormatBadge(format = tool.formatChannel)
+                FormatBadge(format = activeFormatBadge)
                 Spacer(modifier = Modifier.width(8.dp))
+            }
+        }
+
+        if (isUnifiedOfficeConverter) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OfficeConverterTab.entries.forEach { tab ->
+                        val selected = activeOfficeTab == tab
+                        FilterChip(
+                            selected = selected,
+                            onClick = { activeOfficeTab = tab },
+                            label = {
+                                Text(
+                                    text = tab.label,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = if (tab == OfficeConverterTab.WORD_PDF) {
+                                        Icons.Filled.Description
+                                    } else {
+                                        Icons.Filled.TableChart
+                                    },
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("office_tab_${tab.name.lowercase()}")
+                        )
+                    }
+                }
             }
         }
 
@@ -170,21 +237,26 @@ fun ConversionStudioScreen(
                     preselectedDocId = preselectedDocId,
                     onMerge = onMergePdfs
                 )
-                ConversionToolType.WORD_TO_PDF -> WordAndPdfBidirectionalStudio(
-                    documents = documents,
-                    preselectedDocId = preselectedDocId,
-                    engine = engine,
-                    onConvertTextToPdf = onConvertTextToPdf,
-                    onConvertPdfToWord = onConvertPdfToWord,
-                    onConvertUploadedPdfToWord = onConvertUploadedPdfToWord
-                )
-                ConversionToolType.EXCEL_CONVERTER -> ExcelConverterStudio(
-                    documents = documents,
-                    preselectedDocId = preselectedDocId,
-                    onDocOrPdfToExcel = onDocOrPdfToExcel,
-                    onExcelToPdf = onExcelToPdf,
-                    onExcelToWord = onExcelToWord
-                )
+                ConversionToolType.WORD_TO_PDF,
+                ConversionToolType.EXCEL_CONVERTER -> {
+                    when (activeOfficeTab) {
+                        OfficeConverterTab.WORD_PDF -> WordAndPdfBidirectionalStudio(
+                            documents = documents,
+                            preselectedDocId = preselectedDocId,
+                            engine = engine,
+                            onConvertTextToPdf = onConvertTextToPdf,
+                            onConvertPdfToWord = onConvertPdfToWord,
+                            onConvertUploadedPdfToWord = onConvertUploadedPdfToWord
+                        )
+                        OfficeConverterTab.EXCEL_DOC -> ExcelConverterStudio(
+                            documents = documents,
+                            preselectedDocId = preselectedDocId,
+                            onDocOrPdfToExcel = onDocOrPdfToExcel,
+                            onExcelToPdf = onExcelToPdf,
+                            onExcelToWord = onExcelToWord
+                        )
+                    }
+                }
                 ConversionToolType.COMPRESS_IMAGE -> ImageCompressorStudio(
                     documents = documents,
                     preselectedDocId = preselectedDocId,
@@ -212,6 +284,11 @@ fun ConversionStudioScreen(
             }
         }
     }
+}
+
+private enum class OfficeConverterTab(val label: String) {
+    WORD_PDF("Word ⇄ PDF"),
+    EXCEL_DOC("Excel ⇄ Doc")
 }
 
 private enum class ExcelConversionMode(val label: String) {

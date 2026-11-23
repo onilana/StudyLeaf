@@ -26,10 +26,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DocumentScanner
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
@@ -40,6 +44,8 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -85,12 +91,20 @@ import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.PageReorderBoardScreen
 import com.example.ui.screens.PdfReaderScreen
 import com.example.ui.screens.StudyAiAssistantScreen
+import com.example.update.InAppUpdatePhase
+import com.example.update.InAppUpdateUiState
 import kotlinx.coroutines.flow.flowOf
 
 @Composable
 fun StudyLeafApp(
     viewModel: StudyLeafViewModel,
-    isDarkTheme: Boolean
+    isDarkTheme: Boolean,
+    updateState: InAppUpdateUiState = InAppUpdateUiState(),
+    onCheckForUpdates: () -> Unit = {},
+    onStartInAppUpdate: () -> Unit = {},
+    onCompleteInAppUpdate: () -> Unit = {},
+    onDismissUpdateBanner: () -> Unit = {},
+    onOpenExternalRelease: (String) -> Unit = {}
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val aiState by viewModel.aiState.collectAsStateWithLifecycle()
@@ -265,6 +279,7 @@ fun StudyLeafApp(
                             document = doc,
                             editorState = editorState,
                             windowSize = windowSize,
+                            engine = viewModel.engine,
                             onBack = { viewModel.openReader(doc.id) },
                             onRunAiExtract = { viewModel.reExtractEditorTextWithAi(doc) },
                             onSave = { newTitle, editedText, targetFormat, overwriteOriginal, fontSizePt, textAlignment ->
@@ -276,6 +291,26 @@ fun StudyLeafApp(
                                     overwriteOriginal = overwriteOriginal,
                                     fontSizePt = fontSizePt,
                                     textAlignment = textAlignment
+                                )
+                            },
+                            onSaveVisualPdf = { newTitle, edits, signatures, redactions, sanitizeMetadata, overwriteOriginal ->
+                                viewModel.saveVisualEditedPdf(
+                                    source = doc,
+                                    newTitle = newTitle,
+                                    edits = edits,
+                                    signatures = signatures,
+                                    redactions = redactions,
+                                    sanitizeMetadata = sanitizeMetadata,
+                                    overwriteOriginal = overwriteOriginal
+                                )
+                            },
+                            onSavePreservedDocx = { newTitle, editedMap, previewBody, overwriteOriginal ->
+                                viewModel.savePreservedDocxDocument(
+                                    source = doc,
+                                    newTitle = newTitle,
+                                    editedParagraphsByIndex = editedMap,
+                                    previewBodyText = previewBody,
+                                    overwriteOriginal = overwriteOriginal
                                 )
                             }
                         )
@@ -323,8 +358,13 @@ fun StudyLeafApp(
                             document = doc,
                             windowSize = windowSize,
                             engine = viewModel.engine,
-                            onSaveReordered = { order, title ->
-                                viewModel.runReorderPages(doc, order, title)
+                            onSaveReordered = { specs, title ->
+                                viewModel.runReorderPages(
+                                    source = doc,
+                                    orderedPages = specs.map { it.originalPageIndex },
+                                    outputTitle = title,
+                                    pageSpecs = specs
+                                )
                             },
                             onBack = viewModel::closeOverlay
                         )
@@ -402,6 +442,11 @@ fun StudyLeafApp(
                                 onOpenGeminiAccount = { toolbarColor ->
                                     viewModel.openGeminiAccountInApp(toolbarColorArgb = toolbarColor)
                                 },
+                                updateState = updateState,
+                                onCheckForUpdates = onCheckForUpdates,
+                                onStartInAppUpdate = onStartInAppUpdate,
+                                onCompleteInAppUpdate = onCompleteInAppUpdate,
+                                onOpenExternalRelease = onOpenExternalRelease,
                                 onSearchChange = viewModel::updateSearch,
                                 onFilterChange = viewModel::selectFilter,
                                 onQuickToolClick = { viewModel.openTool(it) },
@@ -636,6 +681,25 @@ fun StudyLeafApp(
                 }
             }
 
+            // Non-intrusive In-App Update Progress / Restart Banner (never kicks user to Play Store)
+            if (!updateState.bannerDismissed) {
+                val showBanner = updateState.phase is InAppUpdatePhase.PlayUpdateAvailable ||
+                    updateState.phase is InAppUpdatePhase.Downloading ||
+                    updateState.phase is InAppUpdatePhase.ReadyToInstall
+                if (showBanner) {
+                    InAppUpdateBanner(
+                        phase = updateState.phase,
+                        onStartUpdate = onStartInAppUpdate,
+                        onRestartInstall = onCompleteInAppUpdate,
+                        onDismiss = onDismissUpdateBanner,
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .statusBarsPadding()
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+            }
+
             // Processing Scrim Overlay (Level 4 elevation)
             if (uiState.isProcessing) {
                 Box(
@@ -667,6 +731,132 @@ fun StudyLeafApp(
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InAppUpdateBanner(
+    phase: InAppUpdatePhase,
+    onStartUpdate: () -> Unit,
+    onRestartInstall: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("in_app_update_banner"),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        shadowElevation = 6.dp,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f))
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = when (phase) {
+                        is InAppUpdatePhase.ReadyToInstall -> Icons.Filled.RestartAlt
+                        is InAppUpdatePhase.Downloading -> Icons.Filled.Download
+                        else -> Icons.Filled.SystemUpdate
+                    },
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+                Column(modifier = Modifier.weight(1f)) {
+                    when (phase) {
+                        is InAppUpdatePhase.PlayUpdateAvailable -> {
+                            Text(
+                                text = stringResource(R.string.update_available_title),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                text = "Download right inside StudyLeaf without leaving the app.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f)
+                            )
+                        }
+                        is InAppUpdatePhase.Downloading -> {
+                            val pct = (phase.progressFraction * 100f).toInt().coerceIn(0, 100)
+                            Text(
+                                text = "${stringResource(R.string.update_downloading)} $pct%",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                        is InAppUpdatePhase.ReadyToInstall -> {
+                            Text(
+                                text = stringResource(R.string.update_ready_title),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                            Text(
+                                text = "Tap Restart & Install to finish updating StudyLeaf.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f)
+                            )
+                        }
+                        else -> Unit
+                    }
+                }
+                when (phase) {
+                    is InAppUpdatePhase.PlayUpdateAvailable -> {
+                        Button(
+                            onClick = onStartUpdate,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("update_start_in_app_button")
+                        ) {
+                            Text(stringResource(R.string.update_download_now), style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    is InAppUpdatePhase.ReadyToInstall -> {
+                        Button(
+                            onClick = onRestartInstall,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("update_restart_install_button")
+                        ) {
+                            Text(stringResource(R.string.update_restart_install), style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                    else -> Unit
+                }
+                if (phase !is InAppUpdatePhase.Downloading) {
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Close,
+                            contentDescription = stringResource(R.string.action_close),
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+            if (phase is InAppUpdatePhase.Downloading) {
+                if (phase.progressFraction > 0f) {
+                    LinearProgressIndicator(
+                        progress = { phase.progressFraction },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }
