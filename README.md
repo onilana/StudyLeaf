@@ -63,18 +63,22 @@ All core document conversions and optimizations run locally on the device:
 ```text
 app/src/main/java/com/example/
 ├── MainActivity.kt                  # Edge-to-edge host, App Check init, Open With / Share intents
-├── StudyLeafApp.kt                  # Adaptive scaffold, navigation state, dialogs & tool routing
+├── ai/
+│   ├── AppCheckInitializer.kt       # Firebase App Check attestation initializer
+│   └── StudyLeafAiEngine.kt         # Firebase AI Logic assistant & study helper
 ├── data/
-│   ├── ai/StudyAiRepository.kt      # Firebase AI Logic study assistant
-│   ├── engine/DocumentEngine.kt     # PDF, Word, Excel, image compression & scan enhancement engine
+│   ├── engine/                      # PDF, Word, Excel, image compression & scan enhancement engines
 │   ├── local/                       # Room database, DAOs, entities & DataStore preferences
-│   ├── model/DocumentModels.kt      # Domain models, scan filters, resolutions & tool definitions
+│   ├── model/StudyLeafModels.kt     # Domain models, scan filters, resolutions & tool definitions
 │   └── repository/                  # Document repository & sample workspace seeding
-└── ui/
-    ├── StudyLeafViewModel.kt        # Centralized UI state & background operations
-    ├── components/                  # Reusable M3 cards, search bar, chips, preview pane & brand mark
-    ├── screens/                     # Home, Files, History, Reader, Scanner, Converter, Reorder & AI
-    └── theme/                       # Material 3 color schemes, typography & shapes
+├── ui/
+│   ├── StudyLeafApp.kt              # Adaptive scaffold, navigation state, dialogs & tool routing
+│   ├── StudyLeafViewModel.kt        # Centralized UI state & background operations
+│   ├── components/                  # Reusable M3 cards, search bar, chips, editor & preview canvas
+│   ├── screens/                     # Home, Files, History, Reader, Scanner, Converter, Reorder & AI
+│   └── theme/                       # Material 3 color schemes, typography & shapes
+└── update/
+    └── InAppUpdateController.kt     # Google Play In-App Updates coordinator
 ```
 
 ---
@@ -82,12 +86,21 @@ app/src/main/java/com/example/
 ## Building the Project
 
 ### Prerequisites
-- Android Studio (Ladybug or newer) with JDK 11+
+- Android Studio (Ladybug or newer) or JDK 17+ with Gradle 9+
 - Android SDK 36 installed
+
+### Build Release APK & Bundle (.aab)
+```bash
+./gradlew :app:assembleRelease :app:bundleRelease
+```
+
+The generated artifacts are output to:
+- **Signed Release APK:** `app/build/outputs/apk/release/app-release.apk`
+- **Release App Bundle (AAB):** `app/build/outputs/bundle/release/app-release.aab`
 
 ### Build Debug APK
 ```bash
-gradle :app:assembleDebug
+./gradlew :app:assembleDebug
 ```
 
 The generated APK is output to:
